@@ -111,4 +111,73 @@ export class TipService {
       throw new NotFoundError('Entity', pi);
     }
   }
+
+  /**
+   * Recursively scan MFS directory for all .tip files
+   * Returns array of {pi, tip} objects
+   */
+  private async scanDirectory(
+    path: string,
+    results: Array<{ pi: string; tip: string }> = []
+  ): Promise<Array<{ pi: string; tip: string }>> {
+    try {
+      const entries = await this.ipfs.mfsList(path);
+
+      for (const entry of entries) {
+        const fullPath = `${path}/${entry.Name}`;
+
+        if (entry.Type === 1) {
+          // Directory - recurse
+          await this.scanDirectory(fullPath, results);
+        } else if (entry.Name.endsWith('.tip')) {
+          // Tip file - read and extract PI
+          const pi = entry.Name.replace(/\.tip$/, '');
+          const tip = await this.readTip(pi);
+          results.push({ pi, tip });
+        }
+      }
+
+      return results;
+    } catch (error) {
+      // If directory doesn't exist, return empty results
+      if (error instanceof NotFoundError) {
+        return results;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * List all entity PIs with pagination
+   * Returns sorted list (by PI) with offset/limit support
+   */
+  async listEntities(options?: {
+    offset?: number;
+    limit?: number;
+  }): Promise<{
+    entities: Array<{ pi: string; tip: string }>;
+    total: number;
+    offset: number;
+    limit: number;
+  }> {
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 100;
+
+    // Scan all entities
+    const allEntities = await this.scanDirectory(this.baseDir);
+
+    // Sort by PI for consistent ordering
+    allEntities.sort((a, b) => a.pi.localeCompare(b.pi));
+
+    // Apply pagination
+    const total = allEntities.length;
+    const entities = allEntities.slice(offset, offset + limit);
+
+    return {
+      entities,
+      total,
+      offset,
+      limit,
+    };
+  }
 }

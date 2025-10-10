@@ -38,6 +38,15 @@ This service orchestrates IPFS RPC calls to manage:
 ### `POST /upload`
 Upload raw bytes to IPFS; returns CID for use in manifests.
 
+### `GET /cat/{cid}`
+Download file content by CID.
+
+### `GET /entities`
+List all entities with pagination.
+- Query params: `offset` (default: 0), `limit` (default: 100, max: 1000), `include_metadata` (default: false)
+- Returns: paginated list of entities with PI and tip CID
+- With `include_metadata=true`: includes version, timestamp, note, component count, and children count
+
 ### `POST /entities`
 Create new entity with v1 manifest.
 

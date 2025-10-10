@@ -11,6 +11,7 @@ import { uploadHandler } from './handlers/upload';
 import {
   createEntityHandler,
   getEntityHandler,
+  listEntitiesHandler,
 } from './handlers/entities';
 import {
   appendVersionHandler,
@@ -71,6 +72,9 @@ app.post('/upload', uploadHandler);
 
 // GET /cat/:cid - Download file content
 app.get('/cat/:cid', downloadHandler);
+
+// GET /entities - List all entities (must come before /:pi route)
+app.get('/entities', listEntitiesHandler);
 
 // POST /entities
 app.post('/entities', createEntityHandler);

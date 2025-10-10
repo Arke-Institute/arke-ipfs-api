@@ -259,6 +259,24 @@ export class IPFSService {
   }
 
   /**
+   * List MFS directory contents
+   * POST /api/v0/files/ls
+   */
+  async mfsList(path: string): Promise<
+    Array<{
+      Name: string;
+      Type: number; // 0=file, 1=directory
+      Size: number;
+      Hash: string;
+    }>
+  > {
+    const url = this.endpoint('/files/ls', { arg: path, long: 'true' });
+    const response = await this.call(url);
+    const result = await response.json<{ Entries: Array<{ Name: string; Type: number; Size: number; Hash: string }> | null }>();
+    return result.Entries || [];
+  }
+
+  /**
    * List directory contents
    * POST /api/v0/ls
    */

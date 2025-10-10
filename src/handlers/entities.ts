@@ -112,3 +112,62 @@ export async function getEntityHandler(c: Context): Promise<Response> {
 
   return c.json(response);
 }
+
+/**
+ * GET /entities
+ * List all entities with pagination
+ * Query params: offset, limit, include_metadata
+ */
+export async function listEntitiesHandler(c: Context): Promise<Response> {
+  const tipSvc: TipService = c.get('tipService');
+  const ipfs: IPFSService = c.get('ipfs');
+
+  // Parse query parameters
+  const offset = parseInt(c.req.query('offset') || '0', 10);
+  const limit = parseInt(c.req.query('limit') || '100', 10);
+  const includeMetadata = c.req.query('include_metadata') === 'true';
+
+  // Validate parameters
+  if (offset < 0 || limit < 1 || limit > 1000) {
+    return c.json(
+      {
+        error: 'INVALID_PARAMS',
+        message: 'offset must be >= 0, limit must be 1-1000',
+      },
+      400
+    );
+  }
+
+  // Get paginated list
+  const result = await tipSvc.listEntities({ offset, limit });
+
+  // If include_metadata is requested, fetch manifests
+  let entities;
+  if (includeMetadata) {
+    entities = await Promise.all(
+      result.entities.map(async ({ pi, tip }) => {
+        const manifest = (await ipfs.dagGet(tip)) as ManifestV1;
+        return {
+          pi,
+          tip,
+          ver: manifest.ver,
+          ts: manifest.ts,
+          note: manifest.note || null,
+          component_count: Object.keys(manifest.components).length,
+          children_count: manifest.children_pi?.length || 0,
+        };
+      })
+    );
+  } else {
+    // Just return PI and tip CID
+    entities = result.entities;
+  }
+
+  return c.json({
+    entities,
+    total: result.total,
+    offset: result.offset,
+    limit: result.limit,
+    has_more: result.offset + result.limit < result.total,
+  });
+}
