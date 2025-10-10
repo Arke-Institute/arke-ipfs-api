@@ -1,0 +1,27 @@
+{
+  // Cloudflare Worker configuration for Arke IPFS API
+  "name": "arke-ipfs-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-11-01",
+
+  // Enable Node.js compatibility for better library support
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Environment variables (use wrangler secret for sensitive values)
+  "vars": {
+    "ENVIRONMENT": "production"
+  },
+
+  // Secrets (set with: wrangler secret put IPFS_API_URL)
+  // IPFS_API_URL should point to your Kubo node, e.g., http://ipfs-kubo:5001
+
+  // Worker limits
+  "limits": {
+    "cpu_ms": 50
+  },
+
+  // Development configuration
+  "dev": {
+    "port": 8787
+  }
+}

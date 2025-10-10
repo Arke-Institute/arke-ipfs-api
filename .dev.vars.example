@@ -1,0 +1,8 @@
+# Copy this file to .dev.vars for local development
+# wrangler dev automatically loads .dev.vars
+
+# IPFS Kubo RPC API URL
+IPFS_API_URL=http://127.0.0.1:5001
+
+# Optional environment identifier
+ENVIRONMENT=development
