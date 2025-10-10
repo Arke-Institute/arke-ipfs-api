@@ -5,7 +5,7 @@ Cloudflare Worker implementing the Arke entity management API over IPFS/Kubo.
 ## Architecture
 
 This service orchestrates IPFS RPC calls to manage:
-- **Entities**: immutable manifests (IPLD dag-cbor) with versioning via `prev` links
+- **Entities**: immutable manifests (IPLD dag-json) with versioning via `prev` links
 - **Tips**: `.tip` files in MFS that point to the latest manifest CID for each PI (Persistent Identifier)
 - **Components**: CID references to metadata, images, and other assets
 - **Relations**: parent-child relationships via `children_pi` arrays

@@ -38,7 +38,7 @@ A unique, immutable identifier for an entity.
 IPFS content address for immutable data.
 
 **Format:** CIDv1 with base32 encoding
-- **Prefix:** `bafy` (dag-pb) or `bafyrei` (dag-cbor)
+- **Prefix:** `bafy` (dag-pb) or `baguqee` (dag-json)
 - **Example:** `bafyreicdsbeei3ry566ok2co7oqfpv2r3s34e5h4gagzy3nnvbqlnyi2n4`
 
 **Properties:**
@@ -61,7 +61,7 @@ Reference to another IPFS object.
 - Standard IPLD link format
 - Key is always `"/"`
 - Value is a CID string
-- Used in dag-cbor encoding
+- Used in dag-json encoding
 
 ---
 
@@ -82,7 +82,7 @@ Reference to another IPFS object.
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                        IPFS Layer                           │
-│      (Immutable Content - dag-cbor manifests + files)       │
+│      (Immutable Content - dag-json manifests + files)       │
 │                                                             │
 │  bafyreidw2yist... (Manifest v2)                           │
 │    ├─ prev: bafyreidz6oukn... (Manifest v1)               │
@@ -100,7 +100,7 @@ Reference to another IPFS object.
 - Single source of truth for "current version"
 
 **IPFS Layer (Content):**
-- Immutable versioned manifests (dag-cbor)
+- Immutable versioned manifests (dag-json)
 - File content (raw bytes or dag-pb)
 - Version history chain via `prev` links
 - Permanent, content-addressed storage
@@ -109,7 +109,7 @@ Reference to another IPFS object.
 
 ## Manifest Schema
 
-### ManifestV1 (IPLD dag-cbor)
+### ManifestV1 (IPLD dag-json)
 
 The core data structure representing an entity version.
 
@@ -136,7 +136,7 @@ interface IPLDLink {
 
 #### JSON Representation
 
-Before dag-cbor encoding, manifests are JSON:
+Before dag-json encoding, manifests are JSON:
 
 ```json
 {
@@ -174,11 +174,11 @@ Before dag-cbor encoding, manifests are JSON:
 
 #### Storage Format
 
-Manifests are stored as **dag-cbor** in IPFS:
-- Binary CBOR encoding
+Manifests are stored as **dag-json** in IPFS:
+- JSON text encoding
 - IPLD links encoded as CID objects
 - Produces deterministic CIDs
-- Smaller than JSON (~20-30% compression)
+- Larger than dag-cbor but preserves IPLD link semantics
 
 ---
 
@@ -611,8 +611,8 @@ bafyreidw2yistgsv37ercgfm7g3uwif6uj7oquzo6h2fwzo3lsesnzanwu
 ### IPFS Content Layout
 
 **Manifests:**
-- Codec: `dag-cbor` (0x71)
-- CID prefix: `bafyrei` (base32, dag-cbor, sha256)
+- Codec: `dag-json` (0x0129)
+- CID prefix: `baguqee` (base32, dag-json, sha256)
 - Pinned: Yes (permanent storage)
 
 **Files (components):**
@@ -662,7 +662,7 @@ function isValidCID(cid: string): boolean {
 - Must be valid CIDv1 base32
 - Starts with `b` (base32)
 - Common prefixes:
-  - `bafyrei` - dag-cbor
+  - `baguqee` - dag-json
   - `bafybei` - dag-pb
   - `bafkrei` - raw
 
@@ -790,7 +790,7 @@ POST /entities
 }
 ```
 
-**Stored Manifest (dag-cbor):**
+**Stored Manifest (dag-json):**
 ```json
 {
   "schema": "arke/manifest@v1",
@@ -824,7 +824,7 @@ POST /relations
 }
 ```
 
-**Stored Manifest (dag-cbor):**
+**Stored Manifest (dag-json):**
 ```json
 {
   "schema": "arke/manifest@v1",

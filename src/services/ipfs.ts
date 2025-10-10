@@ -89,12 +89,12 @@ export class IPFSService {
   }
 
   /**
-   * Store DAG node (dag-cbor)
+   * Store DAG node (dag-json)
    * POST /api/v0/dag/put
    */
   async dagPut(obj: unknown): Promise<string> {
     const url = this.endpoint('/dag/put', {
-      'store-codec': 'dag-cbor',
+      'store-codec': 'dag-json',
       'input-codec': 'json',
       pin: 'true',
     });

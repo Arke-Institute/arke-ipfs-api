@@ -33,3 +33,6 @@ pnpm-debug.log*
 
 # Testing
 coverage/
+
+# Test data
+VJ_Day_Hickam_Aug_1995/

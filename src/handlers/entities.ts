@@ -52,7 +52,7 @@ export async function createEntityHandler(c: Context): Promise<Response> {
     ...(body.note && { note: body.note }),
   };
 
-  // Store manifest in IPFS (dag-cbor, pinned)
+  // Store manifest in IPFS (dag-json, pinned)
   const manifestCid = await ipfs.dagPut(manifest);
 
   // Write .tip file

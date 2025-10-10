@@ -351,7 +351,7 @@ All errors return JSON:
 
 ## Data Model
 
-### Manifest (dag-cbor)
+### Manifest (dag-json)
 
 ```json
 {
