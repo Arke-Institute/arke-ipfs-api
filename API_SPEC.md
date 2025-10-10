@@ -51,6 +51,82 @@ Upload raw bytes to IPFS. Returns CID(s) for use in manifest components.
 
 ---
 
+### Download File
+
+**`GET /cat/{cid}`**
+
+Download file content by CID. Streams bytes directly from IPFS.
+
+**Path Parameters:**
+- `cid` - IPFS CID (e.g., `bafybeiabc123...`)
+
+**Response:** `200 OK`
+- Content-Type: `application/octet-stream` (or detected type)
+- Headers:
+  - `Cache-Control: public, max-age=31536000, immutable`
+  - `X-IPFS-CID: {cid}`
+
+**Errors:**
+- `400` - Invalid CID format
+- `404` - Content not found in IPFS
+
+---
+
+### List Entities
+
+**`GET /entities`**
+
+List all entities with pagination. Scans MFS directory structure to discover all entities.
+
+**Query Parameters:**
+- `offset` - Starting position (default: 0)
+- `limit` - Max results per page (1-1000, default: 100)
+- `include_metadata` - Include full entity details (default: false)
+
+**Response:** `200 OK`
+
+Without metadata:
+```json
+{
+  "entities": [
+    {
+      "pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
+      "tip": "bafybeiabc789..."
+    }
+  ],
+  "total": 42,
+  "offset": 0,
+  "limit": 100,
+  "has_more": false
+}
+```
+
+With `include_metadata=true`:
+```json
+{
+  "entities": [
+    {
+      "pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
+      "tip": "bafybeiabc789...",
+      "ver": 3,
+      "ts": "2025-10-08T22:10:15Z",
+      "note": "Updated metadata",
+      "component_count": 2,
+      "children_count": 1
+    }
+  ],
+  "total": 42,
+  "offset": 0,
+  "limit": 100,
+  "has_more": false
+}
+```
+
+**Errors:**
+- `400` - Invalid pagination params (offset < 0 or limit > 1000)
+
+---
+
 ### Create Entity
 
 **`POST /entities`**
