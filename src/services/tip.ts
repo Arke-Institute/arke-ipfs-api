@@ -1,6 +1,7 @@
 import { IPFSService } from './ipfs';
 import { shard2 } from '../utils/ulid';
 import { NotFoundError, IPFSError } from '../utils/errors';
+import { generateShardPairsFromCursor } from '../utils/shard';
 
 /**
  * Tip file management in MFS
@@ -113,71 +114,119 @@ export class TipService {
   }
 
   /**
-   * Recursively scan MFS directory for all .tip files
-   * Returns array of {pi, tip} objects
+   * List .tip files in a specific shard directory
+   * Returns array of PIs (without .tip extension)
    */
-  private async scanDirectory(
-    path: string,
-    results: Array<{ pi: string; tip: string }> = []
-  ): Promise<Array<{ pi: string; tip: string }>> {
+  private async listTipFiles(shard1: string, shard2: string): Promise<string[]> {
     try {
-      const entries = await this.ipfs.mfsList(path);
-
-      for (const entry of entries) {
-        const fullPath = `${path}/${entry.Name}`;
-
-        if (entry.Type === 1) {
-          // Directory - recurse
-          await this.scanDirectory(fullPath, results);
-        } else if (entry.Name.endsWith('.tip')) {
-          // Tip file - read and extract PI
-          const pi = entry.Name.replace(/\.tip$/, '');
-          const tip = await this.readTip(pi);
-          results.push({ pi, tip });
-        }
-      }
-
-      return results;
+      const entries = await this.ipfs.mfsList(`${this.baseDir}/${shard1}/${shard2}`);
+      const pis = entries
+        .filter((e) => e.Type === 0 && e.Name.endsWith('.tip')) // Only .tip files
+        .map((e) => e.Name.replace(/\.tip$/, ''))
+        .sort(); // Sort by PI (lexicographic = chronological for ULIDs)
+      return pis;
     } catch (error) {
-      // If directory doesn't exist, return empty results
-      if (error instanceof NotFoundError) {
-        return results;
-      }
-      throw error;
+      // Directory doesn't exist - this is expected for most shard combinations
+      return [];
     }
   }
 
   /**
-   * List all entity PIs with pagination
-   * Returns sorted list (by PI) with offset/limit support
+   * Iterate through entities in shard order, starting after cursor
+   * Uses precomputed shard enumeration with parallel batch processing
+   * Yields {pi, tip} for each entity found
    */
-  async listEntities(options?: {
-    offset?: number;
+  private async *iterateShards(cursor?: string): AsyncGenerator<{ pi: string; tip: string }> {
+    const [cursorShard1, cursorShard2] = cursor ? shard2(cursor) : [undefined, undefined];
+    console.log(`[TIP] Starting parallel shard enumeration${cursor ? ` from cursor: ${cursor} (shard ${cursorShard1}/${cursorShard2})` : ''}`);
+
+    const BATCH_SIZE = 100; // Check 100 shards in parallel
+    let shardsChecked = 0;
+    let shardsWithData = 0;
+
+    const shardGenerator = generateShardPairsFromCursor(cursorShard1, cursorShard2);
+
+    while (true) {
+      // Collect batch of shards to check
+      const batch: Array<[string, string]> = [];
+      for (let i = 0; i < BATCH_SIZE; i++) {
+        const next = shardGenerator.next();
+        if (next.done) break;
+        batch.push(next.value);
+      }
+
+      if (batch.length === 0) break; // No more shards to check
+
+      // Check all shards in batch in parallel
+      const results = await Promise.all(
+        batch.map(async ([shard1, shard2]) => {
+          const pis = await this.listTipFiles(shard1, shard2);
+          return { shard1, shard2, pis };
+        })
+      );
+
+      shardsChecked += batch.length;
+
+      // Process results in order (maintain lexicographic sorting)
+      for (const { shard1, shard2, pis } of results) {
+        if (pis.length > 0) {
+          shardsWithData++;
+          console.log(`[TIP] Shard ${shard1}/${shard2}: Found ${pis.length} entities (batch checked ${shardsChecked} shards total)`);
+
+          // Yield entities in sorted order
+          for (const pi of pis) {
+            // Skip PIs up to and including the cursor
+            if (cursor && pi <= cursor) continue;
+
+            // Read tip and yield
+            const tip = await this.readTip(pi);
+            yield { pi, tip };
+          }
+        }
+      }
+    }
+
+    console.log(`[TIP] Iteration complete: checked ${shardsChecked} shards in parallel batches, found data in ${shardsWithData}`);
+  }
+
+  /**
+   * List entities with cursor-based pagination
+   * Returns entities and next cursor (null if no more pages)
+   */
+  async listEntitiesWithCursor(options?: {
     limit?: number;
+    cursor?: string;
   }): Promise<{
     entities: Array<{ pi: string; tip: string }>;
-    total: number;
-    offset: number;
-    limit: number;
+    next_cursor: string | null;
   }> {
-    const offset = options?.offset ?? 0;
     const limit = options?.limit ?? 100;
+    const cursor = options?.cursor;
 
-    // Scan all entities
-    const allEntities = await this.scanDirectory(this.baseDir);
+    console.log(`[TIP] listEntitiesWithCursor(limit=${limit}, cursor=${cursor || 'none'})`);
 
-    // Sort by PI for consistent ordering
-    allEntities.sort((a, b) => a.pi.localeCompare(b.pi));
+    const entities: Array<{ pi: string; tip: string }> = [];
 
-    // Apply pagination
-    const total = allEntities.length;
-    const entities = allEntities.slice(offset, offset + limit);
+    // Iterate through shards and collect entities
+    for await (const entity of this.iterateShards(cursor)) {
+      entities.push(entity);
 
+      if (entities.length >= limit) {
+        // We have enough entities, return with next cursor
+        const lastPI = entities[entities.length - 1].pi;
+        console.log(`[TIP] Returning ${entities.length} entities, next_cursor=${lastPI}`);
+        return {
+          entities,
+          next_cursor: lastPI, // Cursor is just the last PI
+        };
+      }
+    }
+
+    // No more entities available
+    console.log(`[TIP] Returning ${entities.length} entities (end of list)`);
     return {
       entities,
-      total,
-      offset,
-      limit,
+      next_cursor: null,
     };
   }
 }

@@ -5,6 +5,7 @@
 This API manages versioned entities (PIs) as immutable IPLD manifests in IPFS, with mutable `.tip` pointers in MFS for fast lookups.
 
 **Base URL:** `https://your-worker.workers.dev`
+**Test URL:** `http://localhost:8787`
 
 ---
 
@@ -76,10 +77,10 @@ Download file content by CID. Streams bytes directly from IPFS.
 
 **`GET /entities`**
 
-List all entities with pagination. Scans MFS directory structure to discover all entities.
+List entities with cursor-based pagination. Efficiently traverses shard structure without scanning all entities.
 
 **Query Parameters:**
-- `offset` - Starting position (default: 0)
+- `cursor` - Pagination cursor (PI from previous page's `next_cursor`, optional)
 - `limit` - Max results per page (1-1000, default: 100)
 - `include_metadata` - Include full entity details (default: false)
 
@@ -94,10 +95,8 @@ Without metadata:
       "tip": "bafybeiabc789..."
     }
   ],
-  "total": 42,
-  "offset": 0,
   "limit": 100,
-  "has_more": false
+  "next_cursor": "01J8ME3H6FZ3KQ5W1P2XY8K7E5"
 }
 ```
 
@@ -115,15 +114,23 @@ With `include_metadata=true`:
       "children_count": 1
     }
   ],
-  "total": 42,
-  "offset": 0,
   "limit": 100,
-  "has_more": false
+  "next_cursor": "01J8ME3H6FZ3KQ5W1P2XY8K7E5"
 }
 ```
 
+**Pagination:**
+- First page: `GET /entities?limit=100`
+- Next page: `GET /entities?limit=100&cursor={next_cursor}`
+- `next_cursor` is `null` when no more pages available
+- Cursor is opaque (PI of last entity); do not construct manually
+
+**Performance:**
+- O(limit) complexity regardless of total entities
+- Efficiently skips shards based on cursor position
+
 **Errors:**
-- `400` - Invalid pagination params (offset < 0 or limit > 1000)
+- `400` - Invalid pagination params (limit not 1-1000 or invalid cursor format)
 
 ---
 

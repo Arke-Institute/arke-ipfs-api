@@ -30,11 +30,19 @@ export class IPFSService {
     endpoint: string,
     options?: RequestInit
   ): Promise<Response> {
+    const startTime = Date.now();
+    const path = new URL(endpoint).pathname;
+
     try {
+      console.log(`[IPFS] → ${path}`);
+
       const response = await fetch(endpoint, {
         method: 'POST',
         ...options,
       });
+
+      const duration = Date.now() - startTime;
+      console.log(`[IPFS] ← ${path} (${duration}ms, status: ${response.status})`);
 
       if (!response.ok) {
         // Try to parse IPFS error response
@@ -50,6 +58,9 @@ export class IPFSService {
 
       return response;
     } catch (error) {
+      const duration = Date.now() - startTime;
+      console.log(`[IPFS] ✘ ${path} (${duration}ms, error: ${error})`);
+
       if (error instanceof IPFSError) {
         throw error;
       }

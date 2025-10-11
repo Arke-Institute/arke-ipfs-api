@@ -115,35 +115,58 @@ export async function getEntityHandler(c: Context): Promise<Response> {
 
 /**
  * GET /entities
- * List all entities with pagination
- * Query params: offset, limit, include_metadata
+ * List entities with cursor-based pagination
+ * Query params: cursor, limit, include_metadata
  */
 export async function listEntitiesHandler(c: Context): Promise<Response> {
+  const startTime = Date.now();
   const tipSvc: TipService = c.get('tipService');
   const ipfs: IPFSService = c.get('ipfs');
 
   // Parse query parameters
-  const offset = parseInt(c.req.query('offset') || '0', 10);
+  const cursor = c.req.query('cursor');
   const limit = parseInt(c.req.query('limit') || '100', 10);
   const includeMetadata = c.req.query('include_metadata') === 'true';
 
+  console.log(`[HANDLER] GET /entities?limit=${limit}&cursor=${cursor || 'none'}&include_metadata=${includeMetadata}`);
+
   // Validate parameters
-  if (offset < 0 || limit < 1 || limit > 1000) {
+  if (limit < 1 || limit > 1000) {
     return c.json(
       {
         error: 'INVALID_PARAMS',
-        message: 'offset must be >= 0, limit must be 1-1000',
+        message: 'limit must be 1-1000',
       },
       400
     );
   }
 
-  // Get paginated list
-  const result = await tipSvc.listEntities({ offset, limit });
+  // Validate cursor if provided
+  if (cursor) {
+    // Basic ULID format check (26 chars, valid alphabet)
+    if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(cursor)) {
+      return c.json(
+        {
+          error: 'INVALID_CURSOR',
+          message: 'cursor must be a valid 26-character ULID',
+        },
+        400
+      );
+    }
+  }
+
+  // Get paginated list with cursor
+  const result = await tipSvc.listEntitiesWithCursor({
+    limit,
+    cursor: cursor || undefined
+  });
+
+  console.log(`[HANDLER] Got ${result.entities.length} entities from TipService`);
 
   // If include_metadata is requested, fetch manifests
   let entities;
   if (includeMetadata) {
+    console.log(`[HANDLER] Fetching metadata for ${result.entities.length} entities...`);
     entities = await Promise.all(
       result.entities.map(async ({ pi, tip }) => {
         const manifest = (await ipfs.dagGet(tip)) as ManifestV1;
@@ -163,11 +186,12 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
     entities = result.entities;
   }
 
+  const duration = Date.now() - startTime;
+  console.log(`[HANDLER] Response ready (${duration}ms): ${entities.length} entities, next_cursor=${result.next_cursor || 'null'}`);
+
   return c.json({
     entities,
-    total: result.total,
-    offset: result.offset,
-    limit: result.limit,
-    has_more: result.offset + result.limit < result.total,
+    limit,
+    next_cursor: result.next_cursor,
   });
 }
