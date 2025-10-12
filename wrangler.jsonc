@@ -9,7 +9,8 @@
 
   // Environment variables (use wrangler secret for sensitive values)
   "vars": {
-    "ENVIRONMENT": "production"
+    "ENVIRONMENT": "production",
+    "IPFS_SERVER_API_URL": "http://localhost:3000"
   },
 
   // Secrets (set with: wrangler secret put IPFS_API_URL)

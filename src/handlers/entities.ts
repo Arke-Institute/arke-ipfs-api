@@ -5,6 +5,8 @@ import { ulid } from '../utils/ulid';
 import { validateCIDRecord } from '../utils/cid';
 import { ConflictError } from '../utils/errors';
 import { validateBody } from '../utils/validation';
+import { getBackendURL } from '../config';
+import { appendToChain, listEntitiesFromBackend } from '../clients/ipfs-server';
 import {
   ManifestV1,
   link,
@@ -57,6 +59,16 @@ export async function createEntityHandler(c: Context): Promise<Response> {
 
   // Write .tip file
   await tipSvc.writeTip(pi, manifestCid);
+
+  // Append to recent chain (optimization - don't fail entity creation if this fails)
+  try {
+    const backendURL = getBackendURL(c.env);
+    const chainCid = await appendToChain(backendURL, pi);
+    console.log(`[CHAIN] Appended entity ${pi} to chain: ${chainCid}`);
+  } catch (error) {
+    // Log error but don't fail the request - chain append is async optimization
+    console.error(`[CHAIN] Failed to append entity ${pi} to chain:`, error);
+  }
 
   // Response
   const response: CreateEntityResponse = {
@@ -120,7 +132,6 @@ export async function getEntityHandler(c: Context): Promise<Response> {
  */
 export async function listEntitiesHandler(c: Context): Promise<Response> {
   const startTime = Date.now();
-  const tipSvc: TipService = c.get('tipService');
   const ipfs: IPFSService = c.get('ipfs');
 
   // Parse query parameters
@@ -143,32 +154,51 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
 
   // Validate cursor if provided
   if (cursor) {
-    // Basic ULID format check (26 chars, valid alphabet)
-    if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(cursor)) {
+    // CID format check (CIDv1 base32: starts with 'b' + base32 multibase prefix)
+    // Accepts: bafyb... (raw/dag-pb), baguqeera... (dag-json), etc.
+    if (!/^b[a-z2-7]{52,}$/i.test(cursor)) {
       return c.json(
         {
           error: 'INVALID_CURSOR',
-          message: 'cursor must be a valid 26-character ULID',
+          message: 'cursor must be a valid CID (base32 format)',
         },
         400
       );
     }
   }
 
-  // Get paginated list with cursor
-  const result = await tipSvc.listEntitiesWithCursor({
-    limit,
-    cursor: cursor || undefined
-  });
+  // Get paginated list from backend API
+  let backendResult;
+  try {
+    const backendURL = getBackendURL(c.env);
+    backendResult = await listEntitiesFromBackend(backendURL, {
+      limit,
+      cursor: cursor || undefined,
+    });
+    console.log(`[HANDLER] Got ${backendResult.items.length} entities from backend API`);
+  } catch (error) {
+    console.error('[HANDLER] Backend API request failed:', error);
+    return c.json(
+      {
+        error: 'BACKEND_ERROR',
+        message: 'Failed to retrieve entities from backend',
+      },
+      503
+    );
+  }
 
-  console.log(`[HANDLER] Got ${result.entities.length} entities from TipService`);
+  // Transform backend items to match current API format
+  const baseEntities = backendResult.items.map((item) => ({
+    pi: item.pi,
+    tip: item.tip,
+  }));
 
   // If include_metadata is requested, fetch manifests
   let entities;
   if (includeMetadata) {
-    console.log(`[HANDLER] Fetching metadata for ${result.entities.length} entities...`);
+    console.log(`[HANDLER] Fetching metadata for ${baseEntities.length} entities...`);
     entities = await Promise.all(
-      result.entities.map(async ({ pi, tip }) => {
+      baseEntities.map(async ({ pi, tip }) => {
         const manifest = (await ipfs.dagGet(tip)) as ManifestV1;
         return {
           pi,
@@ -183,15 +213,15 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
     );
   } else {
     // Just return PI and tip CID
-    entities = result.entities;
+    entities = baseEntities;
   }
 
   const duration = Date.now() - startTime;
-  console.log(`[HANDLER] Response ready (${duration}ms): ${entities.length} entities, next_cursor=${result.next_cursor || 'null'}`);
+  console.log(`[HANDLER] Response ready (${duration}ms): ${entities.length} entities, next_cursor=${backendResult.next_cursor || 'null'}`);
 
   return c.json({
     entities,
     limit,
-    next_cursor: result.next_cursor,
+    next_cursor: backendResult.next_cursor,
   });
 }

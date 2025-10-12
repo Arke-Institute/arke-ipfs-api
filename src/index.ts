@@ -22,7 +22,13 @@ import { updateRelationsHandler } from './handlers/relations';
 import { resolveHandler } from './handlers/resolve';
 import { downloadHandler } from './handlers/download';
 
-const app = new Hono<{ Bindings: Env }>();
+// Define context variables type
+type Variables = {
+  ipfs: IPFSService;
+  tipService: TipService;
+};
+
+const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 // CORS middleware (optional, configure as needed)
 app.use('/*', cors());
