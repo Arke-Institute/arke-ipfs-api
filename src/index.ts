@@ -21,6 +21,7 @@ import {
 import { updateRelationsHandler } from './handlers/relations';
 import { resolveHandler } from './handlers/resolve';
 import { downloadHandler } from './handlers/download';
+import type { ManifestV1 } from './types/manifest';
 
 // Define context variables type
 type Variables = {
@@ -102,6 +103,66 @@ app.post('/relations', updateRelationsHandler);
 
 // GET /resolve/:pi
 app.get('/resolve/:pi', resolveHandler);
+
+// GET /arke - Convenience endpoint for the Arke origin block (00000000000000000000000000)
+app.get('/arke', async (c) => {
+  const ARKE_PI = '00000000000000000000000000';
+  const ipfs: IPFSService = c.get('ipfs');
+  const tipSvc: TipService = c.get('tipService');
+
+  try {
+    const tipCid = await tipSvc.readTip(ARKE_PI);
+    const manifest = (await ipfs.dagGet(tipCid)) as ManifestV1;
+
+    return c.json({
+      pi: manifest.pi,
+      ver: manifest.ver,
+      ts: manifest.ts,
+      manifest_cid: tipCid,
+      prev_cid: manifest.prev ? manifest.prev['/'] : null,
+      components: Object.fromEntries(
+        Object.entries(manifest.components).map(([label, linkObj]) => [
+          label,
+          linkObj['/'],
+        ])
+      ),
+      ...(manifest.children_pi && { children_pi: manifest.children_pi }),
+      ...(manifest.note && { note: manifest.note }),
+    });
+  } catch (error) {
+    return errorToResponse(error);
+  }
+});
+
+// GET /genesis - Alias for /arke
+app.get('/genesis', async (c) => {
+  const ARKE_PI = '00000000000000000000000000';
+  const ipfs: IPFSService = c.get('ipfs');
+  const tipSvc: TipService = c.get('tipService');
+
+  try {
+    const tipCid = await tipSvc.readTip(ARKE_PI);
+    const manifest = (await ipfs.dagGet(tipCid)) as ManifestV1;
+
+    return c.json({
+      pi: manifest.pi,
+      ver: manifest.ver,
+      ts: manifest.ts,
+      manifest_cid: tipCid,
+      prev_cid: manifest.prev ? manifest.prev['/'] : null,
+      components: Object.fromEntries(
+        Object.entries(manifest.components).map(([label, linkObj]) => [
+          label,
+          linkObj['/'],
+        ])
+      ),
+      ...(manifest.children_pi && { children_pi: manifest.children_pi }),
+      ...(manifest.note && { note: manifest.note }),
+    });
+  } catch (error) {
+    return errorToResponse(error);
+  }
+});
 
 // 404 handler
 app.notFound((c) => {
