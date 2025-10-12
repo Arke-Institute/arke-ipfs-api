@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './types/env';
-import { validateEnv, getIPFSURL } from './config';
+import { validateEnv, getIPFSURL, getBackendURL, getArkePI } from './config';
 import { IPFSService } from './services/ipfs';
 import { TipService } from './services/tip';
+import { createEntity, getEntity } from './services/entity-ops';
 import { errorToResponse } from './utils/errors';
 
 // Handlers
@@ -21,7 +22,6 @@ import {
 import { updateRelationsHandler } from './handlers/relations';
 import { resolveHandler } from './handlers/resolve';
 import { downloadHandler } from './handlers/download';
-import type { ManifestV1 } from './types/manifest';
 
 // Define context variables type
 type Variables = {
@@ -104,32 +104,63 @@ app.post('/relations', updateRelationsHandler);
 // GET /resolve/:pi
 app.get('/resolve/:pi', resolveHandler);
 
-// GET /arke - Convenience endpoint for the Arke origin block (00000000000000000000000000)
+// POST /arke/init - Initialize Arke origin block if it doesn't exist
+app.post('/arke/init', async (c) => {
+  const ARKE_PI = getArkePI(c.env);
+  const ipfs: IPFSService = c.get('ipfs');
+  const tipSvc: TipService = c.get('tipService');
+  const backendURL = getBackendURL(c.env);
+
+  try {
+    // Check if Arke block already exists
+    const exists = await tipSvc.tipExists(ARKE_PI);
+    if (exists) {
+      const existing = await getEntity(ipfs, tipSvc, ARKE_PI);
+      return c.json({
+        message: 'Arke origin block already exists',
+        ...existing,
+      });
+    }
+
+    // Upload Arke metadata
+    const arkeMetadata = {
+      name: 'Arke',
+      type: 'root',
+      description: 'Origin block of the Arke Institute archive tree. Contains all institutional collections.',
+      note: 'Arke (ἀρχή) - Ancient Greek for \'origin\' or \'beginning\'',
+    };
+    const metadataBlob = new Blob([JSON.stringify(arkeMetadata, null, 2)]);
+    const formData = new FormData();
+    formData.append('file', metadataBlob, 'arke-metadata.json');
+    const uploadResults = await ipfs.add(formData);
+    const metadataCid = uploadResults[0].Hash;
+
+    // Create entity using service layer
+    const response = await createEntity(ipfs, tipSvc, backendURL, {
+      pi: ARKE_PI,
+      components: { metadata: metadataCid },
+      note: 'Genesis entity - root of the archive tree',
+    });
+
+    return c.json({
+      message: 'Arke origin block initialized',
+      metadata_cid: metadataCid,
+      ...response,
+    }, 201);
+  } catch (error) {
+    return errorToResponse(error);
+  }
+});
+
+// GET /arke - Convenience endpoint for the Arke origin block
 app.get('/arke', async (c) => {
-  const ARKE_PI = '00000000000000000000000000';
+  const ARKE_PI = getArkePI(c.env);
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
 
   try {
-    const tipCid = await tipSvc.readTip(ARKE_PI);
-    const manifest = (await ipfs.dagGet(tipCid)) as ManifestV1;
-
-    return c.json({
-      pi: manifest.pi,
-      ver: manifest.ver,
-      ts: manifest.ts,
-      manifest_cid: tipCid,
-      prev_cid: manifest.prev ? manifest.prev['/'] : null,
-      components: Object.fromEntries(
-        Object.entries(manifest.components).map(([label, linkObj]) => [
-          label,
-          linkObj['/'],
-        ])
-      ),
-      ...(manifest.children_pi && { children_pi: manifest.children_pi }),
-      ...(manifest.parent_pi && { parent_pi: manifest.parent_pi }),
-      ...(manifest.note && { note: manifest.note }),
-    });
+    const response = await getEntity(ipfs, tipSvc, ARKE_PI);
+    return c.json(response);
   } catch (error) {
     return errorToResponse(error);
   }

@@ -43,3 +43,10 @@ export function getIPFSURL(env: Env): string {
 export function getBackendURL(env: Env): string {
   return env.IPFS_SERVER_API_URL;
 }
+
+/**
+ * Get Arke origin block PI from environment (with default)
+ */
+export function getArkePI(env: Env): string {
+  return env.ARKE_PI || '00000000000000000000000000';
+}

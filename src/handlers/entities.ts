@@ -1,18 +1,12 @@
 import { Context } from 'hono';
 import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
-import { ulid } from '../utils/ulid';
-import { validateCIDRecord } from '../utils/cid';
-import { ConflictError } from '../utils/errors';
 import { validateBody } from '../utils/validation';
 import { getBackendURL } from '../config';
-import { appendToChain, listEntitiesFromBackend } from '../clients/ipfs-server';
+import { listEntitiesFromBackend } from '../clients/ipfs-server';
+import { createEntity, getEntity } from '../services/entity-ops';
 import {
   ManifestV1,
-  link,
-  CreateEntityRequest,
-  CreateEntityResponse,
-  GetEntityResponse,
   CreateEntityRequestSchema,
 } from '../types/manifest';
 
@@ -23,95 +17,13 @@ import {
 export async function createEntityHandler(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
+  const backendURL = getBackendURL(c.env);
 
   // Validate request body
   const body = await validateBody(c.req.raw, CreateEntityRequestSchema);
 
-  // Generate or validate PI
-  const pi = body.pi || ulid();
-
-  // Check for collision
-  const exists = await tipSvc.tipExists(pi);
-  if (exists) {
-    throw new ConflictError('Entity', pi);
-  }
-
-  // Validate component CIDs
-  validateCIDRecord(body.components, 'components');
-
-  // Build manifest v1
-  const now = new Date().toISOString();
-  const manifest: ManifestV1 = {
-    schema: 'arke/manifest@v1',
-    pi,
-    ver: 1,
-    ts: now,
-    prev: null, // v1 has no previous version
-    components: Object.fromEntries(
-      Object.entries(body.components).map(([label, cid]) => [label, link(cid)])
-    ),
-    ...(body.children_pi && { children_pi: body.children_pi }),
-    ...(body.parent_pi && { parent_pi: body.parent_pi }),
-    ...(body.note && { note: body.note }),
-  };
-
-  // Store manifest in IPFS (dag-json, pinned)
-  const manifestCid = await ipfs.dagPut(manifest);
-
-  // Write .tip file
-  await tipSvc.writeTip(pi, manifestCid);
-
-  // If parent_pi provided, update parent entity to include this child
-  if (body.parent_pi) {
-    try {
-      const parentTip = await tipSvc.readTip(body.parent_pi);
-      const parentManifest = (await ipfs.dagGet(parentTip)) as ManifestV1;
-
-      // Add this entity to parent's children_pi (dedupe)
-      const existingChildren = new Set(parentManifest.children_pi || []);
-      if (!existingChildren.has(pi)) {
-        const newChildren = [...(parentManifest.children_pi || []), pi];
-
-        const updatedParentManifest: ManifestV1 = {
-          schema: 'arke/manifest@v1',
-          pi: body.parent_pi,
-          ver: parentManifest.ver + 1,
-          ts: new Date().toISOString(),
-          prev: link(parentTip),
-          components: parentManifest.components,
-          children_pi: newChildren,
-          ...(parentManifest.parent_pi && { parent_pi: parentManifest.parent_pi }),
-          note: `Added child entity ${pi}`,
-        };
-
-        const newParentTip = await ipfs.dagPut(updatedParentManifest);
-        await tipSvc.writeTip(body.parent_pi, newParentTip);
-
-        console.log(`[RELATION] Auto-updated parent ${body.parent_pi} to include child ${pi}`);
-      }
-    } catch (error) {
-      // Log but don't fail entity creation if parent update fails
-      console.error(`[RELATION] Failed to update parent ${body.parent_pi}:`, error);
-    }
-  }
-
-  // Append to recent chain (optimization - don't fail entity creation if this fails)
-  try {
-    const backendURL = getBackendURL(c.env);
-    const chainCid = await appendToChain(backendURL, pi);
-    console.log(`[CHAIN] Appended entity ${pi} to chain: ${chainCid}`);
-  } catch (error) {
-    // Log error but don't fail the request - chain append is async optimization
-    console.error(`[CHAIN] Failed to append entity ${pi} to chain:`, error);
-  }
-
-  // Response
-  const response: CreateEntityResponse = {
-    pi,
-    ver: 1,
-    manifest_cid: manifestCid,
-    tip: manifestCid,
-  };
+  // Call service layer
+  const response = await createEntity(ipfs, tipSvc, backendURL, body);
 
   return c.json(response, 201);
 }
@@ -123,40 +35,10 @@ export async function createEntityHandler(c: Context): Promise<Response> {
 export async function getEntityHandler(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
-
   const pi = c.req.param('pi');
 
-  // Read tip
-  const tipCid = await tipSvc.readTip(pi);
-
-  // Fetch manifest
-  const manifest = (await ipfs.dagGet(tipCid)) as ManifestV1;
-
-  // Optional: resolve component bytes if requested
-  const resolve = c.req.query('resolve') || 'cids';
-
-  if (resolve === 'bytes') {
-    // TODO: stream component bytes
-    // For MVP, just return CIDs
-  }
-
-  // Transform manifest to response format
-  const response: GetEntityResponse = {
-    pi: manifest.pi,
-    ver: manifest.ver,
-    ts: manifest.ts,
-    manifest_cid: tipCid,
-    prev_cid: manifest.prev ? manifest.prev['/'] : null,
-    components: Object.fromEntries(
-      Object.entries(manifest.components).map(([label, linkObj]) => [
-        label,
-        linkObj['/'],
-      ])
-    ),
-    ...(manifest.children_pi && { children_pi: manifest.children_pi }),
-    ...(manifest.parent_pi && { parent_pi: manifest.parent_pi }),
-    ...(manifest.note && { note: manifest.note }),
-  };
+  // Call service layer
+  const response = await getEntity(ipfs, tipSvc, pi);
 
   return c.json(response);
 }
