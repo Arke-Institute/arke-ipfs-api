@@ -4,6 +4,46 @@
  */
 
 /**
+ * Sleep for specified milliseconds
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Retry a function with exponential backoff
+ *
+ * @param fn - Function to retry
+ * @param maxRetries - Maximum number of retries (default: 3)
+ * @param baseDelay - Base delay in ms (default: 100)
+ * @returns Result of the function
+ */
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 100
+): Promise<T> {
+  let lastError: Error | undefined;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+
+      if (attempt < maxRetries) {
+        // Exponential backoff: 100ms, 200ms, 400ms, 800ms
+        const delay = baseDelay * Math.pow(2, attempt);
+        console.log(`[RETRY] Attempt ${attempt + 1}/${maxRetries + 1} failed, retrying in ${delay}ms...`);
+        await sleep(delay);
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+/**
  * Request body for POST /chain/append
  */
 export interface ChainAppendRequest {
@@ -39,41 +79,60 @@ export interface BackendEntitiesResponse {
 }
 
 /**
- * Append a new entity to the recent chain
+ * Append a new entity to the recent chain (with retry logic)
  * Called after entity creation to update the snapshot system
  *
  * @param backendURL - Base URL of IPFS Server API
  * @param pi - Persistent identifier (ULID)
+ * @param maxRetries - Maximum number of retries (default: 5)
  * @returns Chain entry CID
- * @throws Error if the request fails
+ * @throws Error if all retries fail
  */
 export async function appendToChain(
   backendURL: string,
-  pi: string
+  pi: string,
+  maxRetries: number = 5
 ): Promise<string> {
-  const url = `${backendURL}/chain/append`;
+  return retryWithBackoff(async () => {
+    const url = `${backendURL}/chain/append`;
 
-  const body: ChainAppendRequest = {
-    pi,
-  };
+    const body: ChainAppendRequest = {
+      pi,
+    };
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+    // Add timeout to prevent hanging (10 seconds)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(
-      `Chain append failed: ${response.status} ${response.statusText} - ${text}`
-    );
-  }
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
 
-  const result: ChainAppendResponse = await response.json();
-  return result.cid;
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(
+          `Chain append failed: ${response.status} ${response.statusText} - ${text}`
+        );
+      }
+
+      const result: ChainAppendResponse = await response.json();
+      return result.cid;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if ((error as Error).name === 'AbortError') {
+        throw new Error('Chain append timeout after 10s');
+      }
+      throw error;
+    }
+  }, maxRetries);
 }
 
 /**
