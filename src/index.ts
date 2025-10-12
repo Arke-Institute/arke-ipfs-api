@@ -127,6 +127,7 @@ app.get('/arke', async (c) => {
         ])
       ),
       ...(manifest.children_pi && { children_pi: manifest.children_pi }),
+      ...(manifest.parent_pi && { parent_pi: manifest.parent_pi }),
       ...(manifest.note && { note: manifest.note }),
     });
   } catch (error) {

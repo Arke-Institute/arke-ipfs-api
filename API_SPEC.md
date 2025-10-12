@@ -169,6 +169,7 @@ Create new entity with v1 manifest. Automatically appends entity to backend chai
     "image": "bafybeiabc456..."
   },
   "children_pi": ["01GX...", "01GZ..."],  // optional
+  "parent_pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",  // optional; auto-updates parent
   "note": "Initial version"  // optional
 }
 ```
@@ -184,16 +185,25 @@ Create new entity with v1 manifest. Automatically appends entity to backend chai
 ```
 
 **Side Effects:**
-- Manifest stored in IPFS as dag-json
+- Manifest stored in IPFS as dag-json with `parent_pi` field set (if provided)
 - `.tip` file created in MFS for fast lookups
 - Entity appended to backend recent chain for indexing
 - Entity immediately appears in `/entities` listings
+- **If `parent_pi` provided:** Parent entity automatically updated with new child in `children_pi` array
+
+**Bidirectional Relationships:**
+When creating an entity with `parent_pi`, the API automatically maintains bidirectional relationships:
+1. Child entity gets `parent_pi` field set in manifest
+2. Parent entity automatically appends new child to its `children_pi` array (creates new version)
+3. Both entities are updated atomically
+
+This allows seamless graph traversal in both directions without manual coordination.
 
 **Errors:**
 - `400` - Invalid request body
 - `409` - PI already exists
 
-**Note:** Chain append is an optimization and happens asynchronously. Entity creation succeeds even if backend is temporarily unavailable.
+**Note:** Chain append is an optimization and happens asynchronously. Entity creation succeeds even if backend is temporarily unavailable. Parent updates also happen asynchronously and are logged if they fail.
 
 ---
 
@@ -219,6 +229,7 @@ Fetch latest manifest for entity.
     "image": "bafybeiabc456..."
   },
   "children_pi": ["01GX..."],
+  "parent_pi": "01J8PARENT...",  // optional: parent entity PI
   "note": "Updated metadata"
 }
 ```
@@ -256,6 +267,12 @@ Append new version (CAS-protected).
   "tip": "bafybeinew789..."
 }
 ```
+
+**Bidirectional Relationships:**
+When using `children_pi_add` or `children_pi_remove`, the API automatically maintains bidirectional relationships:
+- **Adding children:** Each child entity is automatically updated with `parent_pi` set to this entity's PI
+- **Removing children:** Each removed child entity has its `parent_pi` field cleared
+- All affected entities get new versions with descriptive notes
 
 **Errors:**
 - `400` - Invalid request body
@@ -337,6 +354,13 @@ Update parent-child relationships.
 
 **Response:** `201 Created` (same format as append version)
 
+**Bidirectional Relationships:**
+This endpoint automatically maintains bidirectional relationships:
+- **Adding children:** Each child entity is automatically updated with `parent_pi` set to parent's PI
+- **Removing children:** Each removed child entity has its `parent_pi` field cleared
+- Parent's `parent_pi` field is preserved across updates
+- All affected entities get new versions with descriptive notes
+
 **Errors:**
 - `400` - Invalid request body
 - `404` - Parent not found
@@ -402,10 +426,17 @@ All errors return JSON:
     "metadata": { "/": "bafybeimeta..." },
     "image": { "/": "bafybeiimg..." }
   },
-  "children_pi": ["01GX...", "01GZ..."],
+  "children_pi": ["01GX...", "01GZ..."],  // optional: child entities
+  "parent_pi": "01J8PARENT...",  // optional: parent entity (for bidirectional traversal)
   "note": "Optional change note"
 }
 ```
+
+**Bidirectional Relationships:**
+- `children_pi`: Array of child entity PIs (parent → children navigation)
+- `parent_pi`: Single parent entity PI (child → parent navigation)
+- Automatically maintained by the API when using `parent_pi` in entity creation or relationship endpoints
+- Enables efficient graph traversal in both directions
 
 ### Tip (MFS)
 

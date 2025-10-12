@@ -29,6 +29,7 @@ export interface ManifestV1 {
     [label: string]: IPLDLink; // e.g., { metadata: { "/": "bafy..." }, image: { "/": "bafy..." } }
   };
   children_pi?: string[]; // optional array of child PI ULIDs
+  parent_pi?: string; // optional parent PI ULID (for bidirectional traversal)
   note?: string; // optional change note
 }
 
@@ -62,6 +63,7 @@ export const ManifestV1Schema = z.object({
   prev: IPLDLinkSchema.nullable(),
   components: z.record(IPLDLinkSchema),
   children_pi: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/)).optional(),
+  parent_pi: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
   note: z.string().optional(),
 });
 
@@ -85,6 +87,7 @@ export interface CreateEntityRequest {
   pi?: string; // optional; server generates if not provided
   components: Record<string, string>; // label -> CID (will be converted to IPLDLink)
   children_pi?: string[];
+  parent_pi?: string; // optional; if provided, server auto-updates parent's children_pi
   note?: string;
 }
 
@@ -118,6 +121,7 @@ export interface GetEntityResponse {
   prev_cid?: string | null;
   components: Record<string, string>; // label -> CID
   children_pi?: string[];
+  parent_pi?: string;
   note?: string;
 }
 
@@ -158,6 +162,7 @@ export const CreateEntityRequestSchema = z.object({
   pi: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
   components: z.record(z.string()),
   children_pi: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/)).optional(),
+  parent_pi: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
   note: z.string().optional(),
 });
 

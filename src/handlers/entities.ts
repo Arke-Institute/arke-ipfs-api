@@ -51,6 +51,7 @@ export async function createEntityHandler(c: Context): Promise<Response> {
       Object.entries(body.components).map(([label, cid]) => [label, link(cid)])
     ),
     ...(body.children_pi && { children_pi: body.children_pi }),
+    ...(body.parent_pi && { parent_pi: body.parent_pi }),
     ...(body.note && { note: body.note }),
   };
 
@@ -59,6 +60,40 @@ export async function createEntityHandler(c: Context): Promise<Response> {
 
   // Write .tip file
   await tipSvc.writeTip(pi, manifestCid);
+
+  // If parent_pi provided, update parent entity to include this child
+  if (body.parent_pi) {
+    try {
+      const parentTip = await tipSvc.readTip(body.parent_pi);
+      const parentManifest = (await ipfs.dagGet(parentTip)) as ManifestV1;
+
+      // Add this entity to parent's children_pi (dedupe)
+      const existingChildren = new Set(parentManifest.children_pi || []);
+      if (!existingChildren.has(pi)) {
+        const newChildren = [...(parentManifest.children_pi || []), pi];
+
+        const updatedParentManifest: ManifestV1 = {
+          schema: 'arke/manifest@v1',
+          pi: body.parent_pi,
+          ver: parentManifest.ver + 1,
+          ts: new Date().toISOString(),
+          prev: link(parentTip),
+          components: parentManifest.components,
+          children_pi: newChildren,
+          ...(parentManifest.parent_pi && { parent_pi: parentManifest.parent_pi }),
+          note: `Added child entity ${pi}`,
+        };
+
+        const newParentTip = await ipfs.dagPut(updatedParentManifest);
+        await tipSvc.writeTip(body.parent_pi, newParentTip);
+
+        console.log(`[RELATION] Auto-updated parent ${body.parent_pi} to include child ${pi}`);
+      }
+    } catch (error) {
+      // Log but don't fail entity creation if parent update fails
+      console.error(`[RELATION] Failed to update parent ${body.parent_pi}:`, error);
+    }
+  }
 
   // Append to recent chain (optimization - don't fail entity creation if this fails)
   try {
@@ -119,6 +154,7 @@ export async function getEntityHandler(c: Context): Promise<Response> {
       ])
     ),
     ...(manifest.children_pi && { children_pi: manifest.children_pi }),
+    ...(manifest.parent_pi && { parent_pi: manifest.parent_pi }),
     ...(manifest.note && { note: manifest.note }),
   };
 

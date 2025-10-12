@@ -67,6 +67,7 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
     prev: link(currentTip),
     components: oldManifest.components, // Unchanged
     ...(newChildrenPi.length > 0 && { children_pi: newChildrenPi }),
+    ...(oldManifest.parent_pi && { parent_pi: oldManifest.parent_pi }),
     ...(body.note && { note: body.note }),
   };
 
@@ -75,6 +76,73 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
 
   // Update .tip
   await tipSvc.writeTip(parentPi, newManifestCid);
+
+  // Update children entities with parent_pi (bidirectional relationship)
+  // Add parent_pi to newly added children
+  if (body.add_children) {
+    for (const childPi of body.add_children) {
+      try {
+        const childTip = await tipSvc.readTip(childPi);
+        const childManifest = (await ipfs.dagGet(childTip)) as ManifestV1;
+
+        // Only update if parent_pi is different (avoid unnecessary versions)
+        if (childManifest.parent_pi !== parentPi) {
+          const updatedChildManifest: ManifestV1 = {
+            schema: 'arke/manifest@v1',
+            pi: childPi,
+            ver: childManifest.ver + 1,
+            ts: new Date().toISOString(),
+            prev: link(childTip),
+            components: childManifest.components,
+            ...(childManifest.children_pi && { children_pi: childManifest.children_pi }),
+            parent_pi: parentPi, // Set parent reference
+            note: `Set parent to ${parentPi}`,
+          };
+
+          const newChildTip = await ipfs.dagPut(updatedChildManifest);
+          await tipSvc.writeTip(childPi, newChildTip);
+
+          console.log(`[RELATION] Updated child ${childPi} to set parent_pi=${parentPi}`);
+        }
+      } catch (error) {
+        // Log but don't fail if child update fails
+        console.error(`[RELATION] Failed to update child ${childPi}:`, error);
+      }
+    }
+  }
+
+  // Remove parent_pi from removed children
+  if (body.remove_children) {
+    for (const childPi of body.remove_children) {
+      try {
+        const childTip = await tipSvc.readTip(childPi);
+        const childManifest = (await ipfs.dagGet(childTip)) as ManifestV1;
+
+        // Only update if child actually has this parent
+        if (childManifest.parent_pi === parentPi) {
+          const updatedChildManifest: ManifestV1 = {
+            schema: 'arke/manifest@v1',
+            pi: childPi,
+            ver: childManifest.ver + 1,
+            ts: new Date().toISOString(),
+            prev: link(childTip),
+            components: childManifest.components,
+            ...(childManifest.children_pi && { children_pi: childManifest.children_pi }),
+            // parent_pi is omitted (removed)
+            note: `Removed parent ${parentPi}`,
+          };
+
+          const newChildTip = await ipfs.dagPut(updatedChildManifest);
+          await tipSvc.writeTip(childPi, newChildTip);
+
+          console.log(`[RELATION] Updated child ${childPi} to remove parent_pi`);
+        }
+      } catch (error) {
+        // Log but don't fail if child update fails
+        console.error(`[RELATION] Failed to update child ${childPi}:`, error);
+      }
+    }
+  }
 
   // Optional: efficient pin swap
   try {
