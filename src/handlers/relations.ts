@@ -3,6 +3,8 @@ import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
 import { CASError } from '../utils/errors';
 import { validateBody } from '../utils/validation';
+import { appendEvent } from '../clients/ipfs-server';
+import { getBackendURL } from '../config';
 import {
   ManifestV1,
   link,
@@ -149,6 +151,21 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
     await ipfs.pinUpdate(currentTip, newManifestCid);
   } catch {
     // Ignore pin update failures
+  }
+
+  // Append update event to event stream (optimization - don't fail relation update if this fails)
+  try {
+    const backendURL = getBackendURL(c.env);
+    const eventCid = await appendEvent(backendURL, {
+      type: 'update',
+      pi: parentPi,
+      ver: newManifest.ver,
+      tip_cid: newManifestCid,
+    });
+    console.log(`[EVENT] Appended update event for parent entity ${parentPi} v${newManifest.ver}: ${eventCid}`);
+  } catch (error) {
+    // Log error but don't fail the request - event append is async optimization
+    console.error(`[EVENT] Failed to append update event for parent entity ${parentPi}:`, error);
   }
 
   // Response

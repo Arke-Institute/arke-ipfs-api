@@ -8,6 +8,8 @@ import {
   validatePagination,
   parseVersionSelector,
 } from '../utils/validation';
+import { appendEvent } from '../clients/ipfs-server';
+import { getBackendURL } from '../config';
 import {
   ManifestV1,
   link,
@@ -161,6 +163,21 @@ export async function appendVersionHandler(c: Context): Promise<Response> {
     await ipfs.pinUpdate(currentTip, newManifestCid);
   } catch {
     // Pin update can fail if old manifest isn't pinned; ignore
+  }
+
+  // Append update event to event stream (optimization - don't fail version append if this fails)
+  try {
+    const backendURL = getBackendURL(c.env);
+    const eventCid = await appendEvent(backendURL, {
+      type: 'update',
+      pi,
+      ver: newManifest.ver,
+      tip_cid: newManifestCid,
+    });
+    console.log(`[EVENT] Appended update event for entity ${pi} v${newManifest.ver}: ${eventCid}`);
+  } catch (error) {
+    // Log error but don't fail the request - event append is async optimization
+    console.error(`[EVENT] Failed to append update event for entity ${pi}:`, error);
   }
 
   // Response

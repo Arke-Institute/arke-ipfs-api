@@ -16,13 +16,15 @@
   // Secrets (set with: wrangler secret put IPFS_API_URL)
   // IPFS_API_URL should point to your Kubo node, e.g., http://ipfs-kubo:5001
 
-  // Worker limits
+  // Worker limits (production only - not enforced in dev mode)
   "limits": {
     "cpu_ms": 50
   },
 
   // Development configuration
+  // Note: CPU limits are not enforced in local dev mode
   "dev": {
-    "port": 8787
+    "port": 8787,
+    "local_protocol": "http"
   }
 }

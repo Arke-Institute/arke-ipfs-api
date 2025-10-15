@@ -44,17 +44,20 @@ async function retryWithBackoff<T>(
 }
 
 /**
- * Request body for POST /chain/append
+ * Request body for POST /events/append
  */
-export interface ChainAppendRequest {
+export interface EventAppendRequest {
+  type: 'create' | 'update';
   pi: string;
+  ver: number;
+  tip_cid: string;
 }
 
 /**
- * Response from POST /chain/append
+ * Response from POST /events/append
  */
-export interface ChainAppendResponse {
-  cid: string;
+export interface EventAppendResponse {
+  event_cid: string;
   success: boolean;
 }
 
@@ -79,26 +82,22 @@ export interface BackendEntitiesResponse {
 }
 
 /**
- * Append a new entity to the recent chain (with retry logic)
- * Called after entity creation to update the snapshot system
+ * Append a create or update event to the event stream (with retry logic)
+ * Called after entity creation/update to track changes in the backend
  *
  * @param backendURL - Base URL of IPFS Server API
- * @param pi - Persistent identifier (ULID)
+ * @param event - Event details (type, pi, ver, tip_cid)
  * @param maxRetries - Maximum number of retries (default: 5)
- * @returns Chain entry CID
+ * @returns Event CID
  * @throws Error if all retries fail
  */
-export async function appendToChain(
+export async function appendEvent(
   backendURL: string,
-  pi: string,
+  event: EventAppendRequest,
   maxRetries: number = 5
 ): Promise<string> {
   return retryWithBackoff(async () => {
-    const url = `${backendURL}/chain/append`;
-
-    const body: ChainAppendRequest = {
-      pi,
-    };
+    const url = `${backendURL}/events/append`;
 
     // Add timeout to prevent hanging (10 seconds)
     const controller = new AbortController();
@@ -110,7 +109,7 @@ export async function appendToChain(
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(event),
         signal: controller.signal,
       });
 
@@ -119,16 +118,16 @@ export async function appendToChain(
       if (!response.ok) {
         const text = await response.text();
         throw new Error(
-          `Chain append failed: ${response.status} ${response.statusText} - ${text}`
+          `Event append failed: ${response.status} ${response.statusText} - ${text}`
         );
       }
 
-      const result: ChainAppendResponse = await response.json();
-      return result.cid;
+      const result: EventAppendResponse = await response.json();
+      return result.event_cid;
     } catch (error) {
       clearTimeout(timeoutId);
       if ((error as Error).name === 'AbortError') {
-        throw new Error('Chain append timeout after 10s');
+        throw new Error('Event append timeout after 10s');
       }
       throw error;
     }

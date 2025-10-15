@@ -41,6 +41,40 @@ The API will be available at `http://localhost:8787`
 curl http://localhost:8787/
 ```
 
+### Initialize and check Arke origin block
+
+The Arke origin block is the root entity of the archive tree. Initialize it (or verify it exists):
+
+```bash
+curl -X POST http://localhost:8787/arke/init
+```
+
+Response (if already exists):
+```json
+{
+  "message": "Arke origin block already exists",
+  "pi": "00000000000000000000000000",
+  "ver": 2,
+  "ts": "2025-10-12T17:35:39.621Z",
+  "manifest_cid": "bafybeiabc789...",
+  "components": {
+    "metadata": "bafkreiabc123..."
+  },
+  "children_pi": ["01K7..."]
+}
+```
+
+You can also fetch it anytime using:
+```bash
+curl http://localhost:8787/arke
+```
+
+This confirms:
+- IPFS connectivity is working
+- MFS operations are functional
+- The backend indexing service is accessible
+- The archive tree root is established
+
 ### Upload a file
 ```bash
 echo "Hello IPFS!" > test.txt

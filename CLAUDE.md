@@ -43,6 +43,13 @@ The system uses a dual-layer approach combining IPFS immutable content with MFS 
    - Components (files/metadata) stored as raw or dag-pb
    - All content is pinned for permanence
 
+3. **Backend Event Stream** (delegated to IPFS Server API)
+   - Event-sourced tracking of all creates and updates
+   - Each event records: `type` (create/update), `pi`, `ver`, `tip_cid`, `ts`
+   - Enables efficient entity listing, mirroring, and change tracking
+   - Snapshots provide point-in-time checkpoints for incremental sync
+   - Backend URL configured via `IPFS_SERVER_API_URL` environment variable
+
 ### Key Services
 
 **IPFSService** (`src/services/ipfs.ts`)
@@ -162,7 +169,8 @@ This distributes entities across directories for better MFS performance.
 
 Set in `wrangler.jsonc`:
 - `ENVIRONMENT` var (set to "production")
-- `IPFS_API_URL` secret (Kubo node endpoint)
+- `IPFS_API_URL` secret (Kubo node endpoint, e.g., http://ipfs-kubo:5001)
+- `IPFS_SERVER_API_URL` secret (Backend API endpoint for event tracking, e.g., http://localhost:3000)
 - Node.js compatibility enabled via `nodejs_compat` flag
 - Worker CPU limit: 50ms
 
@@ -170,6 +178,7 @@ Set in `wrangler.jsonc`:
 
 See these files for complete specifications:
 - `API_SPEC.md` - Full API endpoint documentation
+- `BACKEND_API_WALKTHROUGH.md` - Backend event stream architecture and Kubo RPC usage
 - `SCHEMA.md` - Detailed schema definitions and validation rules
 - `QUICKSTART.md` - Quick start guide
 - `DEPLOYMENT.md` - Deployment instructions

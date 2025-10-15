@@ -3,7 +3,7 @@ import { TipService } from './tip';
 import { ulid } from '../utils/ulid';
 import { validateCIDRecord } from '../utils/cid';
 import { ConflictError } from '../utils/errors';
-import { appendToChain } from '../clients/ipfs-server';
+import { appendEvent } from '../clients/ipfs-server';
 import {
   ManifestV1,
   link,
@@ -90,13 +90,18 @@ export async function createEntity(
     }
   }
 
-  // Append to recent chain (optimization - don't fail entity creation if this fails)
+  // Append create event to event stream (optimization - don't fail entity creation if this fails)
   try {
-    const chainCid = await appendToChain(backendURL, pi);
-    console.log(`[CHAIN] Appended entity ${pi} to chain: ${chainCid}`);
+    const eventCid = await appendEvent(backendURL, {
+      type: 'create',
+      pi,
+      ver: 1,
+      tip_cid: manifestCid,
+    });
+    console.log(`[EVENT] Appended create event for entity ${pi}: ${eventCid}`);
   } catch (error) {
-    // Log error but don't fail the request - chain append is async optimization
-    console.error(`[CHAIN] Failed to append entity ${pi} to chain:`, error);
+    // Log error but don't fail the request - event append is async optimization
+    console.error(`[EVENT] Failed to append create event for entity ${pi}:`, error);
   }
 
   // Response
