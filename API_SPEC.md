@@ -4,8 +4,12 @@
 
 This API manages versioned entities (PIs) as immutable IPLD manifests in IPFS, with mutable `.tip` pointers in MFS for fast lookups.
 
-**Base URL:** `https://your-worker.workers.dev`
-**Test URL:** `http://localhost:8787`
+**Production URL:** `https://api.arke.institute`
+**Local Development URL:** `http://localhost:8787`
+
+**Related Services:**
+- **IPFS Gateway:** `https://ipfs.arke.institute`
+- **IPFS Backend:** `https://ipfs-api.arke.institute` (Kubo RPC + Backend API)
 
 ### Architecture
 

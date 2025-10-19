@@ -1,5 +1,22 @@
 # Quick Start Guide
 
+## Choose Your Environment
+
+**Production (recommended for testing):**
+- API: `https://api.arke.institute`
+- Gateway: `https://ipfs.arke.institute`
+- No setup required - just start testing!
+
+**Local Development:**
+- API: `http://localhost:8787`
+- Requires IPFS node setup (see below)
+
+This guide shows both options. Use `$API` variable to switch between them.
+
+---
+
+## Local Development Setup
+
 ## 1. Install Dependencies
 
 ```bash
@@ -36,9 +53,18 @@ The API will be available at `http://localhost:8787`
 
 ## 5. Test Basic Flow
 
+**Set your API endpoint:**
+```bash
+# Production
+API="https://api.arke.institute"
+
+# OR Local
+API="http://localhost:8787"
+```
+
 ### Check health
 ```bash
-curl http://localhost:8787/
+curl $API/
 ```
 
 ### Initialize and check Arke origin block
@@ -46,7 +72,7 @@ curl http://localhost:8787/
 The Arke origin block is the root entity of the archive tree. Initialize it (or verify it exists):
 
 ```bash
-curl -X POST http://localhost:8787/arke/init
+curl -X POST $API/arke/init
 ```
 
 Response (if already exists):
@@ -66,7 +92,7 @@ Response (if already exists):
 
 You can also fetch it anytime using:
 ```bash
-curl http://localhost:8787/arke
+curl $API/arke
 ```
 
 This confirms:
@@ -78,7 +104,7 @@ This confirms:
 ### Upload a file
 ```bash
 echo "Hello IPFS!" > test.txt
-curl -X POST -F "file=@test.txt" http://localhost:8787/upload
+curl -X POST -F "file=@test.txt" $API/upload
 ```
 
 Response:
@@ -94,7 +120,7 @@ Response:
 
 ### Create an entity
 ```bash
-curl -X POST http://localhost:8787/entities \
+curl -X POST $API/entities \
   -H "Content-Type: application/json" \
   -d '{
     "components": {
@@ -116,18 +142,18 @@ Response:
 
 ### Get the entity
 ```bash
-curl http://localhost:8787/entities/01JDABC123...
+curl $API/entities/01JDABC123...
 ```
 
 ### Append a version
 ```bash
 # Upload new content
 echo "Updated content" > test2.txt
-curl -X POST -F "file=@test2.txt" http://localhost:8787/upload
+curl -X POST -F "file=@test2.txt" $API/upload
 # Returns: {"cid": "bafybeinew..."}
 
 # Append version
-curl -X POST http://localhost:8787/entities/01JDABC123.../versions \
+curl -X POST $API/entities/01JDABC123.../versions \
   -H "Content-Type: application/json" \
   -d '{
     "expect_tip": "bafybeixyz...",
@@ -140,12 +166,12 @@ curl -X POST http://localhost:8787/entities/01JDABC123.../versions \
 
 ### List version history
 ```bash
-curl http://localhost:8787/entities/01JDABC123.../versions
+curl $API/entities/01JDABC123.../versions
 ```
 
 ### Fast resolve
 ```bash
-curl http://localhost:8787/resolve/01JDABC123...
+curl $API/resolve/01JDABC123...
 ```
 
 ## Common Issues
@@ -173,7 +199,9 @@ curl http://localhost:8787/resolve/01JDABC123...
 
 ```bash
 #!/bin/bash
-API="http://localhost:8787"
+# Set your API endpoint
+API="https://api.arke.institute"  # Production
+# API="http://localhost:8787"     # OR Local
 
 # 1. Upload files
 METADATA_CID=$(echo '{"title":"My Item"}' | curl -s -X POST -F "file=@-" "$API/upload" | jq -r '.[0].cid')

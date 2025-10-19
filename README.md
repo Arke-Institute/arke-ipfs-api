@@ -42,8 +42,8 @@ Upload raw bytes to IPFS; returns CID for use in manifests.
 Download file content by CID.
 
 ### `GET /entities`
-List all entities with pagination.
-- Query params: `offset` (default: 0), `limit` (default: 100, max: 1000), `include_metadata` (default: false)
+List all entities with cursor-based pagination.
+- Query params: `cursor` (optional), `limit` (default: 100, max: 1000), `include_metadata` (default: false)
 - Returns: paginated list of entities with PI and tip CID
 - With `include_metadata=true`: includes version, timestamp, note, component count, and children count
 
@@ -75,8 +75,43 @@ Fast PI → tip CID lookup.
 
 ## Environment Variables
 
-- `IPFS_API_URL` (secret): Kubo RPC endpoint
+- `IPFS_API_URL` (secret): Kubo RPC endpoint (e.g., `https://ipfs-api.arke.institute`)
+- `IPFS_SERVER_API_URL` (secret): Backend API endpoint for event stream and entity indexing (e.g., `https://ipfs-api.arke.institute`)
+- `ARKE_PI`: Well-known PI for Arke origin block (default: `00000000000000000000000000`)
 - `ENVIRONMENT`: deployment environment (set in wrangler.jsonc)
+
+## Production Deployment
+
+**Production URLs:**
+- **API Worker:** `https://api.arke.institute`
+- **IPFS Gateway:** `https://ipfs.arke.institute`
+- **IPFS Backend:** `https://ipfs-api.arke.institute` (Kubo RPC + Backend API)
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for deployment instructions.
+
+## Testing
+
+Run the comprehensive integration test suite covering all 20 test cases across 13 endpoints:
+
+```bash
+cd tests/integration
+./api-test-suite.sh
+```
+
+**Test against production:**
+```bash
+./api-test-suite.sh
+```
+
+**Test against local development:**
+```bash
+API_ENDPOINT=http://localhost:8787 \
+GATEWAY_ENDPOINT=https://ipfs.arke.institute \
+KUBO_ENDPOINT=https://ipfs-api.arke.institute \
+./api-test-suite.sh
+```
+
+See [tests/integration/README.md](./tests/integration/README.md) for complete test documentation.
 
 ## See Also
 

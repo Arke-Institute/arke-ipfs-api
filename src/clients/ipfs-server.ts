@@ -62,7 +62,30 @@ export interface EventAppendResponse {
 }
 
 /**
- * Entity item returned from backend
+ * Event item returned from backend
+ */
+export interface BackendEvent {
+  event_cid: string;
+  type: 'create' | 'update';
+  pi: string;
+  ver: number;
+  tip_cid: string;
+  ts: string;
+}
+
+/**
+ * Response from GET /events
+ */
+export interface BackendEventsResponse {
+  items: BackendEvent[];
+  total_events: number;
+  total_pis: number;
+  has_more: boolean;
+  next_cursor: string | null;
+}
+
+/**
+ * Entity item returned from backend (legacy, kept for compatibility)
  */
 export interface BackendEntity {
   pi: string;
@@ -72,7 +95,7 @@ export interface BackendEntity {
 }
 
 /**
- * Response from GET /entities
+ * Response from GET /entities (legacy, kept for compatibility)
  */
 export interface BackendEntitiesResponse {
   items: BackendEntity[];
@@ -174,6 +197,52 @@ export async function listEntitiesFromBackend(
     const text = await response.text();
     throw new Error(
       `List entities failed: ${response.status} ${response.statusText} - ${text}`
+    );
+  }
+
+  return await response.json();
+}
+
+/**
+ * List events from the backend using event stream
+ * Provides time-ordered create/update events for mirroring and change tracking
+ *
+ * @param backendURL - Base URL of IPFS Server API
+ * @param options - Query options
+ * @param options.limit - Number of events to return (default: 100)
+ * @param options.cursor - Optional cursor for cursor-based pagination
+ * @returns Event stream response
+ * @throws Error if the request fails
+ */
+export async function listEventsFromBackend(
+  backendURL: string,
+  options?: {
+    limit?: number;
+    cursor?: string;
+  }
+): Promise<BackendEventsResponse> {
+  const limit = options?.limit ?? 100;
+  const cursor = options?.cursor;
+
+  const url = new URL(`${backendURL}/events`);
+  url.searchParams.set('limit', limit.toString());
+
+  // Use cursor-based pagination
+  if (cursor) {
+    url.searchParams.set('cursor', cursor);
+  }
+
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `List events failed: ${response.status} ${response.statusText} - ${text}`
     );
   }
 

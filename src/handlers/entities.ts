@@ -3,7 +3,7 @@ import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
 import { validateBody } from '../utils/validation';
 import { getBackendURL } from '../config';
-import { listEntitiesFromBackend } from '../clients/ipfs-server';
+import { listEventsFromBackend } from '../clients/ipfs-server';
 import { createEntity, getEntity } from '../services/entity-ops';
 import {
   ManifestV1,
@@ -85,15 +85,15 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
     }
   }
 
-  // Get paginated list from backend API
+  // Get event stream from backend API
   let backendResult;
   try {
     const backendURL = getBackendURL(c.env);
-    backendResult = await listEntitiesFromBackend(backendURL, {
+    backendResult = await listEventsFromBackend(backendURL, {
       limit,
       cursor: cursor || undefined,
     });
-    console.log(`[HANDLER] Got ${backendResult.items.length} entities from backend API`);
+    console.log(`[HANDLER] Got ${backendResult.items.length} events from backend API`);
   } catch (error) {
     console.error('[HANDLER] Backend API request failed:', error);
     return c.json(
@@ -105,11 +105,21 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
     );
   }
 
-  // Transform backend items to match current API format
-  const baseEntities = backendResult.items.map((item) => ({
-    pi: item.pi,
-    tip: item.tip,
-  }));
+  // Transform events to entities (events are chronological, deduplicate by PI)
+  // Note: Events are ordered newest-first, so first occurrence of each PI is the latest
+  const seenPIs = new Set<string>();
+  const baseEntities = backendResult.items
+    .filter((event) => {
+      if (seenPIs.has(event.pi)) {
+        return false; // Skip duplicate PIs
+      }
+      seenPIs.add(event.pi);
+      return true;
+    })
+    .map((event) => ({
+      pi: event.pi,
+      tip: event.tip_cid,
+    }));
 
   // If include_metadata is requested, fetch manifests
   let entities;
