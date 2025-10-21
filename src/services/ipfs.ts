@@ -100,13 +100,16 @@ export class IPFSService {
   }
 
   /**
-   * Store DAG node (dag-json)
+   * Store DAG node (dag-cbor)
    * POST /api/v0/dag/put
+   *
+   * IMPORTANT: Uses input-codec=dag-json to ensure IPLD links
+   * are properly typed (CBOR tag-42) for DAG traversal and CAR exports.
    */
   async dagPut(obj: unknown): Promise<string> {
     const url = this.endpoint('/dag/put', {
-      'store-codec': 'dag-json',
-      'input-codec': 'json',
+      'store-codec': 'dag-cbor',
+      'input-codec': 'dag-json',
       pin: 'true',
     });
 

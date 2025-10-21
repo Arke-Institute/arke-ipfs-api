@@ -50,7 +50,7 @@ export async function createEntity(
     ...(req.note && { note: req.note }),
   };
 
-  // Store manifest in IPFS (dag-json, pinned)
+  // Store manifest in IPFS (dag-cbor, pinned)
   const manifestCid = await ipfs.dagPut(manifest);
 
   // Write .tip file

@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 /**
  * IPLD link format: { "/": "<cid>" }
- * Used for dag-json encoding to create proper DAG links
+ * Used for dag-cbor encoding to create proper DAG links
  */
 export interface IPLDLink {
   '/': string;
@@ -17,7 +17,7 @@ export function link(cid: string): IPLDLink {
 
 /**
  * Manifest schema version 1
- * Stored as dag-json in IPFS with pin=true
+ * Stored as dag-cbor in IPFS with pin=true
  */
 export interface ManifestV1 {
   schema: 'arke/manifest@v1';
