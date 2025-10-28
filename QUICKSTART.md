@@ -102,6 +102,9 @@ This confirms:
 - The archive tree root is established
 
 ### Upload a file
+
+**Note:** The API has a **100 MB upload limit** due to Cloudflare Workers request body size constraints. For files larger than 100 MB, you must upload directly to the Kubo instance via its HTTP API (port 5001).
+
 ```bash
 echo "Hello IPFS!" > test.txt
 curl -X POST -F "file=@test.txt" $API/upload
@@ -186,6 +189,15 @@ curl $API/resolve/01JDABC123...
 ### TypeScript errors in editor
 - Run `npm install` to install dependencies
 - Restart your editor/language server
+
+### File upload fails with HTTP 413
+- **Cause:** File exceeds 100 MB limit
+- **Solution:** Upload files >100 MB directly to Kubo:
+  ```bash
+  # Upload directly to Kubo instance
+  curl -X POST -F "file=@large-file.bin" http://your-kubo-node:5001/api/v0/add
+  ```
+- See [UPLOAD_LIMITS_TEST_RESULTS.md](./UPLOAD_LIMITS_TEST_RESULTS.md) for details
 
 ## Next Steps
 

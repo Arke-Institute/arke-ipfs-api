@@ -38,6 +38,8 @@ This service orchestrates IPFS RPC calls to manage:
 ### `POST /upload`
 Upload raw bytes to IPFS; returns CID for use in manifests.
 
+**Known Limitation:** Maximum file size is **100 MB** due to Cloudflare Workers request body size constraints. For files larger than 100 MB, upload directly to the Kubo instance via its HTTP API (port 5001). See [UPLOAD_LIMITS_TEST_RESULTS.md](./UPLOAD_LIMITS_TEST_RESULTS.md) for details.
+
 ### `GET /cat/{cid}`
 Download file content by CID.
 

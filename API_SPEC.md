@@ -132,8 +132,25 @@ Upload raw bytes to IPFS. Returns CID(s) for use in manifest components.
 ]
 ```
 
+**Upload Size Limit:**
+
+The API has a **maximum upload size of 100 MB per request** due to Cloudflare Workers request body size constraints. This limit has been confirmed through production testing (see [UPLOAD_LIMITS_TEST_RESULTS.md](./UPLOAD_LIMITS_TEST_RESULTS.md)).
+
+**For files larger than 100 MB:**
+1. Upload directly to the Kubo instance via its HTTP API:
+   ```bash
+   curl -X POST -F "file=@large-file.bin" http://your-kubo-node:5001/api/v0/add
+   ```
+2. Use the returned CID in your manifest components as usual
+
+**Note:** Upload times scale roughly linearly with file size:
+- Small files (<10 MB): seconds
+- Medium files (50 MB): ~1 minute
+- Large files (90-99 MB): ~2-3 minutes
+
 **Errors:**
 - `400` - No files provided
+- `413` - File exceeds 100 MB limit
 
 ---
 
