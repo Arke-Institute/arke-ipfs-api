@@ -186,10 +186,9 @@ export class IPFSService {
    * POST /api/v0/pin/update
    */
   async pinUpdate(oldCid: string, newCid: string): Promise<void> {
-    const url = this.endpoint('/pin/update', {
-      arg: oldCid,
-      arg2: newCid, // Note: second arg parameter
-    });
+    // Manually construct URL with repeated arg parameters
+    // (endpoint() helper doesn't support duplicate keys)
+    const url = `${this.baseURL}/api/v0/pin/update?arg=${encodeURIComponent(oldCid)}&arg=${encodeURIComponent(newCid)}`;
     await this.call(url);
   }
 
