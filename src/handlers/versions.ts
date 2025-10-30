@@ -25,7 +25,9 @@ import {
 const MAX_CHILDREN_PER_REQUEST = 100;
 
 // Batch size for parallel processing (to avoid overwhelming Cloudflare Workers)
-const BATCH_SIZE = 10;
+// Reduced to 2 to stay well under the 6 concurrent subrequest limit
+// Each child update makes ~5 IPFS requests, so 2 children = ~10 concurrent requests
+const BATCH_SIZE = 2;
 
 /**
  * POST /entities/:pi/versions

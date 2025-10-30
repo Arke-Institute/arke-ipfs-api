@@ -166,7 +166,9 @@ export class IPFSService {
       arg: cid,
       recursive: recursive.toString(),
     });
-    await this.call(url);
+    const response = await this.call(url);
+    // Consume response body to prevent Cloudflare Workers deadlock
+    await response.text();
   }
 
   /**
@@ -178,7 +180,9 @@ export class IPFSService {
       arg: cid,
       recursive: recursive.toString(),
     });
-    await this.call(url);
+    const response = await this.call(url);
+    // Consume response body to prevent Cloudflare Workers deadlock
+    await response.text();
   }
 
   /**
@@ -189,7 +193,9 @@ export class IPFSService {
     // Manually construct URL with repeated arg parameters
     // (endpoint() helper doesn't support duplicate keys)
     const url = `${this.baseURL}/api/v0/pin/update?arg=${encodeURIComponent(oldCid)}&arg=${encodeURIComponent(newCid)}`;
-    await this.call(url);
+    const response = await this.call(url);
+    // Consume response body to prevent Cloudflare Workers deadlock
+    await response.text();
   }
 
   /**
@@ -201,7 +207,9 @@ export class IPFSService {
       arg: path,
       parents: parents.toString(),
     });
-    await this.call(url);
+    const response = await this.call(url);
+    // Consume response body to prevent Cloudflare Workers deadlock
+    await response.text();
   }
 
   /**
@@ -228,7 +236,9 @@ export class IPFSService {
       : new Blob([content], { type: 'application/octet-stream' });
     formData.append('file', blob);
 
-    await this.call(url, { body: formData });
+    const response = await this.call(url, { body: formData });
+    // Consume response body to prevent Cloudflare Workers deadlock
+    await response.text();
   }
 
   /**
@@ -248,7 +258,9 @@ export class IPFSService {
   async mfsExists(path: string): Promise<boolean> {
     try {
       const url = this.endpoint('/files/stat', { arg: path });
-      await this.call(url);
+      const response = await this.call(url);
+      // Consume response body to prevent Cloudflare Workers deadlock
+      await response.text();
       return true;
     } catch {
       return false;
