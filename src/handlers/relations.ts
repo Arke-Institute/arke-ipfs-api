@@ -1,10 +1,11 @@
 import { Context } from 'hono';
 import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
-import { CASError } from '../utils/errors';
+import { CASError, ValidationError } from '../utils/errors';
 import { validateBody } from '../utils/validation';
 import { appendEvent } from '../clients/ipfs-server';
 import { getBackendURL } from '../config';
+import { processBatchedSettled } from '../utils/batch';
 import {
   ManifestV1,
   link,
@@ -12,6 +13,12 @@ import {
   AppendVersionResponse,
   UpdateRelationsRequestSchema,
 } from '../types/manifest';
+
+// Maximum number of children that can be added/removed in a single request
+const MAX_CHILDREN_PER_REQUEST = 100;
+
+// Batch size for parallel processing (to avoid overwhelming Cloudflare Workers)
+const BATCH_SIZE = 10;
 
 /**
  * POST /relations
@@ -26,6 +33,19 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
   const body = await validateBody(c.req.raw, UpdateRelationsRequestSchema);
 
   const parentPi = body.parent_pi;
+
+  // Validate child count limits
+  if (body.add_children && body.add_children.length > MAX_CHILDREN_PER_REQUEST) {
+    throw new ValidationError(
+      `Cannot add ${body.add_children.length} children in one request. Maximum is ${MAX_CHILDREN_PER_REQUEST}. Please split into multiple requests.`
+    );
+  }
+
+  if (body.remove_children && body.remove_children.length > MAX_CHILDREN_PER_REQUEST) {
+    throw new ValidationError(
+      `Cannot remove ${body.remove_children.length} children in one request. Maximum is ${MAX_CHILDREN_PER_REQUEST}. Please split into multiple requests.`
+    );
+  }
 
   // Read current tip
   const currentTip = await tipSvc.readTip(parentPi);
@@ -80,10 +100,12 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
   await tipSvc.writeTip(parentPi, newManifestCid);
 
   // Update children entities with parent_pi (bidirectional relationship)
-  // Add parent_pi to newly added children
+  // Add parent_pi to newly added children (BATCHED PARALLELIZATION)
   if (body.add_children) {
-    for (const childPi of body.add_children) {
-      try {
+    await processBatchedSettled(
+      body.add_children,
+      BATCH_SIZE,
+      async (childPi) => {
         const childTip = await tipSvc.readTip(childPi);
         const childManifest = (await ipfs.dagGet(childTip)) as ManifestV1;
 
@@ -106,17 +128,16 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
 
           console.log(`[RELATION] Updated child ${childPi} to set parent_pi=${parentPi}`);
         }
-      } catch (error) {
-        // Log but don't fail if child update fails
-        console.error(`[RELATION] Failed to update child ${childPi}:`, error);
       }
-    }
+    );
   }
 
-  // Remove parent_pi from removed children
+  // Remove parent_pi from removed children (BATCHED PARALLELIZATION)
   if (body.remove_children) {
-    for (const childPi of body.remove_children) {
-      try {
+    await processBatchedSettled(
+      body.remove_children,
+      BATCH_SIZE,
+      async (childPi) => {
         const childTip = await tipSvc.readTip(childPi);
         const childManifest = (await ipfs.dagGet(childTip)) as ManifestV1;
 
@@ -139,11 +160,8 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
 
           console.log(`[RELATION] Updated child ${childPi} to remove parent_pi`);
         }
-      } catch (error) {
-        // Log but don't fail if child update fails
-        console.error(`[RELATION] Failed to update child ${childPi}:`, error);
       }
-    }
+    );
   }
 
   // Optional: efficient pin swap

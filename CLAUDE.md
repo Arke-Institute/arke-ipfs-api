@@ -147,6 +147,54 @@ Components are partially updatable:
 - Server merges with previous version's components
 - IPLD links are automatically created from plain CID strings
 
+### Parent-Child Relationships
+
+The API supports bidirectional parent-child relationships with **one-way automatic updates**:
+
+**Automatic Updates (Child → Parent):**
+- When creating an entity with `parent_pi`, the parent is automatically updated
+- Parent's `children_pi` array gets the new child appended (new version created)
+- Implemented in `src/services/entity-ops.ts:60-91`
+
+**Manual Updates Required (Parent → Children):**
+- When creating an entity with `children_pi`, children are NOT automatically updated
+- You must use `POST /relations` endpoint to establish bidirectional links
+- This prevents CPU timeout issues with large child arrays
+
+**Best Practice for Nested Structures:**
+
+```typescript
+// 1. Create children first (no parent specified)
+const child1 = await createEntity({ components: {...} });
+const child2 = await createEntity({ components: {...} });
+
+// 2. Create parent (optionally with children_pi, but not linked yet)
+const parent = await createEntity({ components: {...} });
+
+// 3. Use /relations endpoint for bidirectional linking (supports bulk)
+await POST('/relations', {
+  parent_pi: parent.pi,
+  expect_tip: parent.tip,
+  add_children: [child1.pi, child2.pi]  // Arrays supported for bulk
+});
+// This updates parent AND all children in one call
+```
+
+**Bulk Operations:**
+- `POST /relations` accepts arrays: `add_children`, `remove_children`
+- Children are processed **in parallel batches of 10** using `processBatchedSettled()` for optimal performance and stability
+- Batching prevents overwhelming Cloudflare Workers with too many concurrent requests
+- Implementation: `src/utils/batch.ts` provides batched parallelization utilities
+- Typical performance: ~500-700ms for 10 children, ~2-3s for 50 children, ~5-6s for 100 children
+- **Maximum limit: 100 children per request** (enforced via validation in `relations.ts:34-44` and `versions.ts:59-69`)
+- **Batch size: 10** (configurable via `BATCH_SIZE` constant in handlers)
+- For batches over 100, split into multiple sequential API calls
+
+**Implementation Files:**
+- `src/services/entity-ops.ts` - Entity creation with `parent_pi` auto-update
+- `src/handlers/relations.ts` - Bidirectional relationship updates (bulk)
+- `src/handlers/versions.ts` - Version appending with `children_pi_add/remove` (bulk)
+
 ### Sharding Algorithm
 
 ```typescript

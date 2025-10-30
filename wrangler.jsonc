@@ -15,10 +15,8 @@
     }
   ],
 
-  // Development configuration
-  // Note: CPU limits are not enforced in local dev mode
-  "dev": {
-    "port": 8787,
-    "local_protocol": "http"
+  "observability": {
+    "enabled": true
   }
+ 
 }

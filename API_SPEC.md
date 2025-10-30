@@ -276,25 +276,48 @@ Create new entity with v1 manifest. Automatically appends entity to backend chai
 ```
 
 **Side Effects:**
-- Manifest stored in IPFS as dag-json with `parent_pi` field set (if provided)
+- Manifest stored in IPFS as dag-json
 - `.tip` file created in MFS for fast lookups
 - "create" event appended to backend event stream for tracking
 - Entity immediately appears in `/entities` listings
-- **If `parent_pi` provided:** Parent entity automatically updated with new child in `children_pi` array
+- **If `parent_pi` provided:** Parent entity automatically updated with new child in `children_pi` array (creates new version)
 
-**Bidirectional Relationships:**
-When creating an entity with `parent_pi`, the API automatically maintains bidirectional relationships:
-1. Child entity gets `parent_pi` field set in manifest
-2. Parent entity automatically appends new child to its `children_pi` array (creates new version)
-3. Both entities are updated atomically
+**Automatic Relationship Updates (One-Way Only):**
 
-This allows seamless graph traversal in both directions without manual coordination.
+The API provides **one-way automatic updates** for parent-child relationships:
+
+✅ **Child → Parent (Automatic):**
+- When creating an entity with `parent_pi`, the parent is automatically updated
+- Parent's `children_pi` array gets the new child appended (new version created)
+- Both child and parent are linked bidirectionally in ONE API call
+
+❌ **Parent → Children (Manual):**
+- When creating an entity with `children_pi`, children are NOT automatically updated
+- Children will NOT get `parent_pi` field set
+- You must use `POST /relations` after entity creation to establish bidirectional links
+
+**Best Practice for Nested Structures:**
+```javascript
+// 1. Create children first (no parent)
+const child1 = await POST('/entities', { components: {...} });
+const child2 = await POST('/entities', { components: {...} });
+
+// 2. Create parent (initially without children, or with children_pi but unlinked)
+const parent = await POST('/entities', { components: {...} });
+
+// 3. Use /relations to establish bidirectional links (handles multiple children)
+await POST('/relations', {
+  parent_pi: parent.pi,
+  expect_tip: parent.tip,
+  add_children: [child1.pi, child2.pi]  // Bulk operation
+});
+```
 
 **Errors:**
 - `400` - Invalid request body
 - `409` - PI already exists
 
-**Note:** Event tracking is an optimization and happens asynchronously. Entity creation succeeds even if backend is temporarily unavailable. Parent updates also happen asynchronously and are logged if they fail.
+**Note:** Parent updates happen asynchronously and are logged if they fail. Entity creation succeeds even if parent update fails.
 
 ---
 
@@ -361,12 +384,15 @@ Append new version (CAS-protected).
 
 **Bidirectional Relationships:**
 When using `children_pi_add` or `children_pi_remove`, the API automatically maintains bidirectional relationships:
-- **Adding children:** Each child entity is automatically updated with `parent_pi` set to this entity's PI
-- **Removing children:** Each removed child entity has its `parent_pi` field cleared
+- **Adding children:** Each child entity is automatically updated with `parent_pi` set to this entity's PI (bulk operation supported)
+- **Removing children:** Each removed child entity has its `parent_pi` field cleared (bulk operation supported)
 - All affected entities get new versions with descriptive notes
+- Arrays can contain multiple children for bulk updates
+- Children are processed **in parallel batches of 10** for optimal performance and stability
+- **Maximum limit: 100 children per array** (enforced)
 
 **Errors:**
-- `400` - Invalid request body
+- `400` - Invalid request body (including exceeding 100-child limit)
 - `404` - Entity not found
 - `409` - CAS failure (tip changed)
 
@@ -430,14 +456,14 @@ Fetch specific version by `cid:<CID>` or `ver:<N>`.
 
 **`POST /relations`**
 
-Update parent-child relationships.
+Update parent-child relationships with **automatic bidirectional linking**. This is the recommended way to establish parent-child relationships for bulk operations.
 
 **Request:**
 ```json
 {
   "parent_pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
   "expect_tip": "bafybeiabc789...",
-  "add_children": ["01NEW1...", "01NEW2..."],
+  "add_children": ["01NEW1...", "01NEW2...", "01NEW3..."],  // Bulk: array of children
   "remove_children": ["01OLD..."],
   "note": "Linked new items"
 }
@@ -445,17 +471,39 @@ Update parent-child relationships.
 
 **Response:** `201 Created` (same format as append version)
 
-**Bidirectional Relationships:**
-This endpoint automatically maintains bidirectional relationships:
-- **Adding children:** Each child entity is automatically updated with `parent_pi` set to parent's PI
-- **Removing children:** Each removed child entity has its `parent_pi` field cleared
+**Bidirectional Relationships (Automatic):**
+This endpoint automatically maintains bidirectional relationships for ALL children in the arrays:
+- **Adding children:** Each child entity is automatically updated with `parent_pi` set to parent's PI (creates new child version)
+- **Removing children:** Each removed child entity has its `parent_pi` field cleared (creates new child version)
 - Parent's `parent_pi` field is preserved across updates
 - All affected entities get new versions with descriptive notes
+- **Supports bulk operations:** Pass arrays with multiple children
+
+**Processing:**
+- Children are processed **in parallel batches** of 10 for optimal performance and stability
+- Batching prevents overwhelming Cloudflare Workers with too many concurrent requests
+- Each batch of 10 children processes in parallel, then moves to the next batch
+- Typical performance: ~500-700ms for 10 children, ~2-3s for 50 children, ~5-6s for 100 children
+- **Maximum limit: 100 children per request** (enforced)
+- For batches over 100, split into multiple sequential API calls
 
 **Errors:**
-- `400` - Invalid request body
+- `400` - Invalid request body (including exceeding 100-child limit)
 - `404` - Parent not found
 - `409` - CAS failure
+
+**Example Error (exceeding limit):**
+```json
+{
+  "error": "VALIDATION_ERROR",
+  "message": "Cannot add 150 children in one request. Maximum is 100. Please split into multiple requests."
+}
+```
+
+**Use Cases:**
+- Establishing relationships after creating entities separately
+- Adding multiple files to a folder in one operation
+- Reorganizing hierarchies (remove from one parent, add to another)
 
 ---
 

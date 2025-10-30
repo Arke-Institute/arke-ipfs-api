@@ -10,6 +10,7 @@ import {
 } from '../utils/validation';
 import { appendEvent } from '../clients/ipfs-server';
 import { getBackendURL } from '../config';
+import { processBatchedSettled } from '../utils/batch';
 import {
   ManifestV1,
   link,
@@ -19,6 +20,12 @@ import {
   ListVersionsResponse,
   GetEntityResponse,
 } from '../types/manifest';
+
+// Maximum number of children that can be added/removed in a single request
+const MAX_CHILDREN_PER_REQUEST = 100;
+
+// Batch size for parallel processing (to avoid overwhelming Cloudflare Workers)
+const BATCH_SIZE = 10;
 
 /**
  * POST /entities/:pi/versions
@@ -50,6 +57,19 @@ export async function appendVersionHandler(c: Context): Promise<Response> {
   // Validate component CIDs if provided
   if (body.components) {
     validateCIDRecord(body.components, 'components');
+  }
+
+  // Validate child count limits
+  if (body.children_pi_add && body.children_pi_add.length > MAX_CHILDREN_PER_REQUEST) {
+    throw new ValidationError(
+      `Cannot add ${body.children_pi_add.length} children in one request. Maximum is ${MAX_CHILDREN_PER_REQUEST}. Please split into multiple requests.`
+    );
+  }
+
+  if (body.children_pi_remove && body.children_pi_remove.length > MAX_CHILDREN_PER_REQUEST) {
+    throw new ValidationError(
+      `Cannot remove ${body.children_pi_remove.length} children in one request. Maximum is ${MAX_CHILDREN_PER_REQUEST}. Please split into multiple requests.`
+    );
   }
 
   // Compute new manifest
@@ -92,10 +112,12 @@ export async function appendVersionHandler(c: Context): Promise<Response> {
   await tipSvc.writeTip(pi, newManifestCid);
 
   // Update children entities with parent_pi (bidirectional relationship)
-  // Add parent_pi to newly added children
+  // Add parent_pi to newly added children (BATCHED PARALLELIZATION)
   if (body.children_pi_add) {
-    for (const childPi of body.children_pi_add) {
-      try {
+    await processBatchedSettled(
+      body.children_pi_add,
+      BATCH_SIZE,
+      async (childPi) => {
         const childTip = await tipSvc.readTip(childPi);
         const childManifest = (await ipfs.dagGet(childTip)) as ManifestV1;
 
@@ -118,17 +140,16 @@ export async function appendVersionHandler(c: Context): Promise<Response> {
 
           console.log(`[RELATION] Updated child ${childPi} to set parent_pi=${pi}`);
         }
-      } catch (error) {
-        // Log but don't fail if child update fails
-        console.error(`[RELATION] Failed to update child ${childPi}:`, error);
       }
-    }
+    );
   }
 
-  // Remove parent_pi from removed children
+  // Remove parent_pi from removed children (BATCHED PARALLELIZATION)
   if (body.children_pi_remove) {
-    for (const childPi of body.children_pi_remove) {
-      try {
+    await processBatchedSettled(
+      body.children_pi_remove,
+      BATCH_SIZE,
+      async (childPi) => {
         const childTip = await tipSvc.readTip(childPi);
         const childManifest = (await ipfs.dagGet(childTip)) as ManifestV1;
 
@@ -151,11 +172,8 @@ export async function appendVersionHandler(c: Context): Promise<Response> {
 
           console.log(`[RELATION] Updated child ${childPi} to remove parent_pi`);
         }
-      } catch (error) {
-        // Log but don't fail if child update fails
-        console.error(`[RELATION] Failed to update child ${childPi}:`, error);
       }
-    }
+    );
   }
 
   // Optional: efficient pin swap
