@@ -2,7 +2,7 @@ import { IPFSService } from './ipfs';
 import { TipService } from './tip';
 import { ulid } from '../utils/ulid';
 import { validateCIDRecord } from '../utils/cid';
-import { ConflictError } from '../utils/errors';
+import { ConflictError, TipWriteRaceError } from '../utils/errors';
 import { appendEvent } from '../clients/ipfs-server';
 import {
   ManifestV1,
@@ -58,35 +58,63 @@ export async function createEntity(
 
   // If parent_pi provided, update parent entity to include this child
   if (req.parent_pi) {
-    try {
-      const parentTip = await tipSvc.readTip(req.parent_pi);
-      const parentManifest = (await ipfs.dagGet(parentTip)) as ManifestV1;
+    // Higher retry limit for parent auto-update to handle high-concurrency scenarios
+    // (e.g., 20 entities created simultaneously all updating same parent)
+    const MAX_PARENT_UPDATE_RETRIES = 10;
+    let parentUpdateSuccess = false;
 
-      // Add this entity to parent's children_pi (dedupe)
-      const existingChildren = new Set(parentManifest.children_pi || []);
-      if (!existingChildren.has(pi)) {
-        const newChildren = [...(parentManifest.children_pi || []), pi];
+    for (let attempt = 0; attempt < MAX_PARENT_UPDATE_RETRIES; attempt++) {
+      try {
+        const parentTip = await tipSvc.readTip(req.parent_pi);
+        const parentManifest = (await ipfs.dagGet(parentTip)) as ManifestV1;
 
-        const updatedParentManifest: ManifestV1 = {
-          schema: 'arke/manifest@v1',
-          pi: req.parent_pi,
-          ver: parentManifest.ver + 1,
-          ts: new Date().toISOString(),
-          prev: link(parentTip),
-          components: parentManifest.components,
-          children_pi: newChildren,
-          ...(parentManifest.parent_pi && { parent_pi: parentManifest.parent_pi }),
-          note: `Added child entity ${pi}`,
-        };
+        // Add this entity to parent's children_pi (dedupe)
+        const existingChildren = new Set(parentManifest.children_pi || []);
+        if (!existingChildren.has(pi)) {
+          const newChildren = [...(parentManifest.children_pi || []), pi];
 
-        const newParentTip = await ipfs.dagPut(updatedParentManifest);
-        await tipSvc.writeTip(req.parent_pi, newParentTip);
+          const updatedParentManifest: ManifestV1 = {
+            schema: 'arke/manifest@v1',
+            pi: req.parent_pi,
+            ver: parentManifest.ver + 1,
+            ts: new Date().toISOString(),
+            prev: link(parentTip),
+            components: parentManifest.components,
+            children_pi: newChildren,
+            ...(parentManifest.parent_pi && { parent_pi: parentManifest.parent_pi }),
+            note: `Added child entity ${pi}`,
+          };
 
-        console.log(`[RELATION] Auto-updated parent ${req.parent_pi} to include child ${pi}`);
+          const newParentTip = await ipfs.dagPut(updatedParentManifest);
+          await tipSvc.writeTipAtomic(req.parent_pi, newParentTip, parentTip);
+
+          console.log(`[RELATION] Auto-updated parent ${req.parent_pi} to include child ${pi}`);
+          parentUpdateSuccess = true;
+          break; // Success, exit retry loop
+        } else {
+          // Child already exists in parent, no update needed
+          parentUpdateSuccess = true;
+          break;
+        }
+      } catch (error) {
+        if (error instanceof TipWriteRaceError && attempt < MAX_PARENT_UPDATE_RETRIES - 1) {
+          // Race detected, retry with exponential backoff with jitter
+          // Longer delays than other retry loops to spread out high-concurrency contention
+          const baseDelay = 100 * (2 ** attempt);
+          const jitter = Math.random() * baseDelay;
+          const delay = baseDelay + jitter;
+          console.log(`[RELATION] Parent update race detected for ${req.parent_pi}, retrying in ${delay.toFixed(0)}ms (attempt ${attempt + 2}/${MAX_PARENT_UPDATE_RETRIES})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        // Log but don't fail entity creation if parent update fails after retries
+        console.error(`[RELATION] Failed to update parent ${req.parent_pi} after ${attempt + 1} attempts:`, error);
+        break;
       }
-    } catch (error) {
-      // Log but don't fail entity creation if parent update fails
-      console.error(`[RELATION] Failed to update parent ${req.parent_pi}:`, error);
+    }
+
+    if (!parentUpdateSuccess) {
+      console.warn(`[RELATION] Entity ${pi} created but parent ${req.parent_pi} update failed - parent's children_pi may be incomplete`);
     }
   }
 

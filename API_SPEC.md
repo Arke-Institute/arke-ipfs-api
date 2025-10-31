@@ -24,6 +24,88 @@ This architecture supports millions of entities while maintaining sub-100ms quer
 
 ---
 
+## Concurrency and Race Condition Handling
+
+### Compare-And-Swap (CAS) Protection
+
+All write operations (version appending, relation updates) use **atomic Compare-And-Swap (CAS)** to prevent data loss from concurrent updates. The API implements three-layer protection:
+
+1. **Server-side atomic write** - Pre/post verification detects races
+2. **Server-side automatic retry** - Up to 3-10 retries with exponential backoff
+3. **Client responsibility** - Handle 409 CAS_FAILURE and retry with fresh tip
+
+### CRITICAL: Client-Side Retry Logic Required
+
+**⚠️ Clients MUST implement retry logic for 409 CAS_FAILURE errors.**
+
+When multiple operations update the same entity concurrently:
+- Server handles internal races automatically (transparent to client)
+- Client gets 409 CAS_FAILURE if `expect_tip` is stale (tip changed since last read)
+- **Client MUST fetch fresh tip and retry** - this is NOT optional
+
+**Example: Proper Client Implementation**
+
+```typescript
+async function appendVersion(
+  pi: string,
+  updates: { components?: Record<string, string>, note?: string }
+): Promise<{ pi: string; tip: string; ver: number }> {
+  const MAX_RETRIES = 10;
+  let expectTip = (await getEntity(pi)).manifest_cid; // Initial tip
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      return await fetch(`${API_URL}/entities/${pi}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expect_tip: expectTip, ...updates }),
+      }).then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      });
+    } catch (error: any) {
+      // Check if 409 CAS_FAILURE
+      if (error.message.includes('HTTP 409') && attempt < MAX_RETRIES - 1) {
+        // Exponential backoff with jitter
+        const baseDelay = 100 * (2 ** attempt);
+        const jitter = Math.random() * baseDelay;
+        await sleep(baseDelay + jitter);
+
+        // CRITICAL: Fetch fresh tip before retry
+        expectTip = (await getEntity(pi)).manifest_cid;
+        continue;
+      }
+      throw error; // Not 409 or exhausted retries
+    }
+  }
+  throw new Error('Failed after max retries');
+}
+```
+
+**Why This Matters:**
+
+Without client-side retry, concurrent operations will fail:
+```
+Operation 1: Read tip=v2 → Update component A → 201 Created (v3)
+Operation 2: Read tip=v2 → Update component B → 409 CAS_FAILURE ❌
+```
+
+With proper retry:
+```
+Operation 1: Read tip=v2 → Update component A → 201 Created (v3)
+Operation 2: Read tip=v2 → Update component B → 409 CAS_FAILURE
+            → Retry: Read tip=v3 → Update component B → 201 Created (v4) ✅
+```
+
+**Best Practices:**
+- Always provide `expect_tip` in write operations
+- Implement retry with exponential backoff (10 attempts recommended)
+- Add jitter to prevent thundering herd
+- Fetch fresh tip from server on each retry
+- For bulk operations: Consider sequential processing if retry rate is high
+
+---
+
 ## Endpoints
 
 ### Health Check

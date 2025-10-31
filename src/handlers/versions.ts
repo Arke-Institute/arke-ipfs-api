@@ -36,9 +36,16 @@ const BATCH_SIZE = 2;
 export async function appendVersionHandler(c: Context): Promise<Response> {
   const MAX_CAS_RETRIES = 3;
 
+  const ipfs: IPFSService = c.get('ipfs');
+  const tipSvc: TipService = c.get('tipService');
+  const pi = c.req.param('pi');
+
+  // Parse body ONCE (can't re-read request body stream)
+  const body = await validateBody(c.req.raw, AppendVersionRequestSchema);
+
   for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
     try {
-      return await appendVersionAttempt(c);
+      return await appendVersionAttempt(ipfs, tipSvc, pi, body, c.env);
     } catch (error) {
       if (error instanceof TipWriteRaceError && attempt < MAX_CAS_RETRIES - 1) {
         // Exponential backoff: 50ms, 100ms, 200ms
@@ -62,14 +69,13 @@ export async function appendVersionHandler(c: Context): Promise<Response> {
  * Single attempt at appending a version
  * Throws TipWriteRaceError if race condition detected
  */
-async function appendVersionAttempt(c: Context): Promise<Response> {
-  const ipfs: IPFSService = c.get('ipfs');
-  const tipSvc: TipService = c.get('tipService');
-
-  const pi = c.req.param('pi');
-
-  // Validate request
-  const body = await validateBody(c.req.raw, AppendVersionRequestSchema);
+async function appendVersionAttempt(
+  ipfs: IPFSService,
+  tipSvc: TipService,
+  pi: string,
+  body: AppendVersionRequest,
+  env: any
+): Promise<Response> {
 
   // Read current tip
   const currentTip = await tipSvc.readTip(pi);
@@ -167,7 +173,7 @@ async function appendVersionAttempt(c: Context): Promise<Response> {
           };
 
           const newChildTip = await ipfs.dagPut(updatedChildManifest);
-          await tipSvc.writeTip(childPi, newChildTip);
+          await tipSvc.writeTipAtomic(childPi, newChildTip, childTip);
 
           console.log(`[RELATION] Updated child ${childPi} to set parent_pi=${pi}`);
         }
@@ -199,7 +205,7 @@ async function appendVersionAttempt(c: Context): Promise<Response> {
           };
 
           const newChildTip = await ipfs.dagPut(updatedChildManifest);
-          await tipSvc.writeTip(childPi, newChildTip);
+          await tipSvc.writeTipAtomic(childPi, newChildTip, childTip);
 
           console.log(`[RELATION] Updated child ${childPi} to remove parent_pi`);
         }
@@ -216,7 +222,7 @@ async function appendVersionAttempt(c: Context): Promise<Response> {
 
   // Append update event to event stream (optimization - don't fail version append if this fails)
   try {
-    const backendURL = getBackendURL(c.env);
+    const backendURL = getBackendURL(env);
     const eventCid = await appendEvent(backendURL, {
       type: 'update',
       pi,
@@ -237,7 +243,10 @@ async function appendVersionAttempt(c: Context): Promise<Response> {
     tip: newManifestCid,
   };
 
-  return c.json(response, 201);
+  return new Response(JSON.stringify(response), {
+    status: 201,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 /**

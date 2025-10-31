@@ -1,7 +1,7 @@
 import { Context } from 'hono';
 import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
-import { CASError, ValidationError } from '../utils/errors';
+import { CASError, ValidationError, TipWriteRaceError } from '../utils/errors';
 import { validateBody } from '../utils/validation';
 import { appendEvent } from '../clients/ipfs-server';
 import { getBackendURL } from '../config';
@@ -22,15 +22,50 @@ const BATCH_SIZE = 10;
 
 /**
  * POST /relations
- * Update parent-child relationships
+ * Update parent-child relationships (CAS-protected with automatic retry on race conditions)
  * This is essentially an append-version operation that only modifies children_pi
  */
 export async function updateRelationsHandler(c: Context): Promise<Response> {
+  const MAX_CAS_RETRIES = 3;
+
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
 
-  // Validate request
+  // Parse body ONCE (can't re-read request body stream)
   const body = await validateBody(c.req.raw, UpdateRelationsRequestSchema);
+
+  for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+    try {
+      return await updateRelationsAttempt(ipfs, tipSvc, body, c.env);
+    } catch (error) {
+      if (error instanceof TipWriteRaceError && attempt < MAX_CAS_RETRIES - 1) {
+        // Exponential backoff: 50ms, 100ms, 200ms
+        const delay = 50 * (2 ** attempt) + Math.random() * 50;
+        console.log(`[CAS] Relation update race detected for ${error.pi}, retrying in ${delay.toFixed(0)}ms (attempt ${attempt + 2}/${MAX_CAS_RETRIES})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  // Should never reach here, but TypeScript needs this
+  throw new CASError({
+    actual: 'unknown',
+    expect: 'unknown',
+  });
+}
+
+/**
+ * Single attempt at updating relations
+ * Throws TipWriteRaceError if race condition detected
+ */
+async function updateRelationsAttempt(
+  ipfs: IPFSService,
+  tipSvc: TipService,
+  body: UpdateRelationsRequest,
+  env: any
+): Promise<Response> {
 
   const parentPi = body.parent_pi;
 
@@ -96,8 +131,8 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
   // Store new manifest
   const newManifestCid = await ipfs.dagPut(newManifest);
 
-  // Update .tip
-  await tipSvc.writeTip(parentPi, newManifestCid);
+  // Update .tip with atomic CAS verification
+  await tipSvc.writeTipAtomic(parentPi, newManifestCid, currentTip);
 
   // Update children entities with parent_pi (bidirectional relationship)
   // Add parent_pi to newly added children (BATCHED PARALLELIZATION)
@@ -124,7 +159,7 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
           };
 
           const newChildTip = await ipfs.dagPut(updatedChildManifest);
-          await tipSvc.writeTip(childPi, newChildTip);
+          await tipSvc.writeTipAtomic(childPi, newChildTip, childTip);
 
           console.log(`[RELATION] Updated child ${childPi} to set parent_pi=${parentPi}`);
         }
@@ -156,7 +191,7 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
           };
 
           const newChildTip = await ipfs.dagPut(updatedChildManifest);
-          await tipSvc.writeTip(childPi, newChildTip);
+          await tipSvc.writeTipAtomic(childPi, newChildTip, childTip);
 
           console.log(`[RELATION] Updated child ${childPi} to remove parent_pi`);
         }
@@ -173,7 +208,7 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
 
   // Append update event to event stream (optimization - don't fail relation update if this fails)
   try {
-    const backendURL = getBackendURL(c.env);
+    const backendURL = getBackendURL(env);
     const eventCid = await appendEvent(backendURL, {
       type: 'update',
       pi: parentPi,
@@ -194,5 +229,8 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
     tip: newManifestCid,
   };
 
-  return c.json(response, 201);
+  return new Response(JSON.stringify(response), {
+    status: 201,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }

@@ -123,11 +123,18 @@ All errors converted to JSON responses via `errorToResponse()`
 
 ## Important Implementation Details
 
-### Version Appending (CAS Protection)
+### Atomic CAS Protection (Race Condition Prevention)
 
-When appending a version (`POST /entities/:pi/versions`):
+All write operations use atomic Compare-And-Swap (CAS) to prevent data loss from concurrent updates.
+
+**Endpoints with Atomic CAS:**
+- `POST /entities/:pi/versions` - Version appending
+- `POST /relations` - Parent-child relationship updates
+- `POST /entities` with `parent_pi` - Parent auto-update during entity creation
+
+**How it works:**
 1. Client provides `expect_tip` (current manifest CID)
-2. Server reads actual tip from MFS
+2. Server reads actual tip from MFS and validates CAS
 3. If mismatch → 409 CAS_FAILURE error with `{ expected, actual }` details
 4. If match → create new manifest with incremented version
 5. Update tip atomically with race detection and automatic retry
@@ -135,13 +142,21 @@ When appending a version (`POST /entities/:pi/versions`):
 **Atomic CAS Implementation** (`src/services/tip.ts:76-114`):
 - **Pre-write verification**: Re-checks tip hasn't changed before writing
 - **Post-write verification**: Verifies our write succeeded after writing
-- **Race detection**: Throws `TipWriteRaceError` if another writer won
-- **Automatic retry**: Handler retries up to 3 times with exponential backoff (50ms → 100ms → 200ms)
-- **Idempotent**: Each retry fetches fresh manifest data, ensuring correct component merging
+- **Race detection**: Throws `TipWriteRaceError` if another writer won the race
+- **Automatic retry**: Handlers retry up to 3 times with exponential backoff (50ms → 100ms → 200ms)
+- **Idempotent**: Each retry fetches fresh manifest data, ensuring correct component/relationship merging
 
-This prevents lost updates in concurrent scenarios. If two updates happen simultaneously:
+**Concurrent Update Behavior:**
+If two updates happen simultaneously:
 - First write succeeds and creates version N
-- Second write detects race, retries, and creates version N+1 with both updates merged
+- Second write detects race internally, retries automatically, and creates version N+1 with both updates merged
+- Client only sees successful 201 response - race handling is transparent
+
+**Client vs Server Responsibilities:**
+- ❌ **Don't**: Implement client-side retry loops for internal races
+- ✅ **Do**: Provide correct `expect_tip` based on latest read
+- ✅ **Do**: Handle 409 CAS_FAILURE by fetching new tip and resubmitting (this means client's `expect_tip` was stale)
+- ✅ **Server handles**: Internal race detection and retry (TipWriteRaceError)
 
 ### Version History Traversal
 
