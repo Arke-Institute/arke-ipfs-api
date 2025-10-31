@@ -130,9 +130,18 @@ When appending a version (`POST /entities/:pi/versions`):
 2. Server reads actual tip from MFS
 3. If mismatch → 409 CAS_FAILURE error with `{ expected, actual }` details
 4. If match → create new manifest with incremented version
-5. Update tip atomically
+5. Update tip atomically with race detection and automatic retry
 
-This prevents lost updates in concurrent scenarios.
+**Atomic CAS Implementation** (`src/services/tip.ts:76-114`):
+- **Pre-write verification**: Re-checks tip hasn't changed before writing
+- **Post-write verification**: Verifies our write succeeded after writing
+- **Race detection**: Throws `TipWriteRaceError` if another writer won
+- **Automatic retry**: Handler retries up to 3 times with exponential backoff (50ms → 100ms → 200ms)
+- **Idempotent**: Each retry fetches fresh manifest data, ensuring correct component merging
+
+This prevents lost updates in concurrent scenarios. If two updates happen simultaneously:
+- First write succeeds and creates version N
+- Second write detects race, retries, and creates version N+1 with both updates merged
 
 ### Version History Traversal
 

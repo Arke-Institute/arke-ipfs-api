@@ -103,6 +103,21 @@ export function parseIPFSError(error: unknown): string {
 }
 
 /**
+ * Internal error for tip write race detection (not exposed to API)
+ * Triggers retry in appendVersionHandler
+ */
+export class TipWriteRaceError extends Error {
+  constructor(
+    public pi: string,
+    public expectedCid: string,
+    public actualCid: string
+  ) {
+    super(`Tip write race for ${pi}: expected ${expectedCid}, got ${actualCid}`);
+    this.name = 'TipWriteRaceError';
+  }
+}
+
+/**
  * Map error to HTTP Response
  */
 export function errorToResponse(error: unknown): Response {

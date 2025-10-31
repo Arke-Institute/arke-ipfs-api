@@ -1,7 +1,7 @@
 import { Context } from 'hono';
 import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
-import { CASError, ValidationError } from '../utils/errors';
+import { CASError, ValidationError, TipWriteRaceError } from '../utils/errors';
 import { validateCIDRecord } from '../utils/cid';
 import {
   validateBody,
@@ -31,9 +31,38 @@ const BATCH_SIZE = 2;
 
 /**
  * POST /entities/:pi/versions
- * Append new version (CAS-protected)
+ * Append new version (CAS-protected with automatic retry on race conditions)
  */
 export async function appendVersionHandler(c: Context): Promise<Response> {
+  const MAX_CAS_RETRIES = 3;
+
+  for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+    try {
+      return await appendVersionAttempt(c);
+    } catch (error) {
+      if (error instanceof TipWriteRaceError && attempt < MAX_CAS_RETRIES - 1) {
+        // Exponential backoff: 50ms, 100ms, 200ms
+        const delay = 50 * (2 ** attempt) + Math.random() * 50;
+        console.log(`[CAS] Tip write race detected for ${error.pi}, retrying in ${delay.toFixed(0)}ms (attempt ${attempt + 2}/${MAX_CAS_RETRIES})`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  // Should never reach here, but TypeScript needs this
+  throw new CASError({
+    actual: 'unknown',
+    expect: 'unknown',
+  });
+}
+
+/**
+ * Single attempt at appending a version
+ * Throws TipWriteRaceError if race condition detected
+ */
+async function appendVersionAttempt(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
 
@@ -110,8 +139,8 @@ export async function appendVersionHandler(c: Context): Promise<Response> {
   // Store new manifest
   const newManifestCid = await ipfs.dagPut(newManifest);
 
-  // Update .tip
-  await tipSvc.writeTip(pi, newManifestCid);
+  // Update .tip with atomic CAS verification
+  await tipSvc.writeTipAtomic(pi, newManifestCid, currentTip);
 
   // Update children entities with parent_pi (bidirectional relationship)
   // Add parent_pi to newly added children (BATCHED PARALLELIZATION)

@@ -1,6 +1,6 @@
 import { IPFSService } from './ipfs';
 import { shard2 } from '../utils/ulid';
-import { NotFoundError, IPFSError } from '../utils/errors';
+import { NotFoundError, IPFSError, TipWriteRaceError } from '../utils/errors';
 import { generateShardPairsFromCursor } from '../utils/shard';
 
 /**
@@ -65,6 +65,50 @@ export class TipService {
         truncate: true,
       });
     } catch (error) {
+      throw new IPFSError(`Failed to write tip for ${pi}: ${error}`);
+    }
+  }
+
+  /**
+   * Write tip with atomic CAS verification
+   * Throws TipWriteRaceError if another writer won the race
+   */
+  async writeTipAtomic(pi: string, newCid: string, expectCid: string): Promise<void> {
+    const dir = this.tipDir(pi);
+    const path = this.tipPath(pi);
+
+    try {
+      // Ensure parent directories exist
+      const dirExists = await this.ipfs.mfsExists(dir);
+      if (!dirExists) {
+        await this.ipfs.mfsMkdir(dir, true);
+      }
+
+      // Re-verify tip hasn't changed (CRITICAL CAS CHECK)
+      const actualTip = await this.readTip(pi);
+      if (actualTip !== expectCid) {
+        throw new TipWriteRaceError(pi, expectCid, actualTip);
+      }
+
+      // Write tip file (create or overwrite)
+      await this.ipfs.mfsWrite(path, `${newCid}\n`, {
+        create: true,
+        truncate: true,
+      });
+
+      // POST-WRITE VERIFICATION (detect race condition)
+      const verifyTip = await this.readTip(pi);
+      if (verifyTip !== newCid) {
+        // Someone else wrote after us - throw to trigger retry
+        console.warn(`[TIP] Race detected for ${pi}: wrote ${newCid}, but tip is now ${verifyTip}`);
+        throw new TipWriteRaceError(pi, newCid, verifyTip);
+      }
+
+      console.log(`[TIP] Atomic write verified for ${pi}: ${expectCid} → ${newCid}`);
+    } catch (error) {
+      if (error instanceof TipWriteRaceError) {
+        throw error; // Let retry handler catch this
+      }
       throw new IPFSError(`Failed to write tip for ${pi}: ${error}`);
     }
   }
