@@ -143,6 +143,7 @@ async function getEntity(pi: string): Promise<any> {
 
 async function appendVersion(pi: string, expectTip: string, updates: {
   components?: Record<string, string>;
+  components_remove?: string[];
   children_pi_add?: string[];
   children_pi_remove?: string[];
   note?: string;
@@ -581,6 +582,173 @@ async function testExtremeStress(): Promise<void> {
 }
 
 /**
+ * Test 6: Component removal functionality
+ *
+ * Tests the new components_remove parameter for removing
+ * component keys from manifests.
+ */
+async function testComponentRemoval(): Promise<void> {
+  section('Test 6: Component Removal');
+
+  try {
+    // Test 6a: Remove existing component
+    info('Test 6a: Remove existing component');
+    const cid1 = await uploadTestFile('component-1', 'comp1.txt');
+    const cid2 = await uploadTestFile('component-2', 'comp2.txt');
+    const cid3 = await uploadTestFile('component-3', 'comp3.txt');
+
+    const entity = await createEntity({
+      'comp1': cid1,
+      'comp2': cid2,
+      'comp3': cid3,
+    }, { note: 'Entity with 3 components' });
+
+    info(`Created entity ${entity.pi} with 3 components`);
+
+    // Remove comp2
+    const updated = await appendVersion(entity.pi, entity.tip, {
+      components_remove: ['comp2'],
+      note: 'Removed comp2',
+    });
+
+    const finalEntity = await getEntity(entity.pi);
+
+    if (!finalEntity.components['comp2'] && finalEntity.components['comp1'] && finalEntity.components['comp3']) {
+      pass('Successfully removed component from manifest');
+    } else {
+      fail('Component removal did not work correctly', {
+        expected: { comp1: 'present', comp2: 'removed', comp3: 'present' },
+        actual: finalEntity.components,
+      });
+    }
+
+    // Test 6b: Remove multiple components
+    info('Test 6b: Remove multiple components');
+    const updated2 = await appendVersion(entity.pi, updated.tip, {
+      components_remove: ['comp1', 'comp3'],
+      note: 'Removed comp1 and comp3',
+    });
+
+    const finalEntity2 = await getEntity(entity.pi);
+
+    if (Object.keys(finalEntity2.components).length === 0) {
+      pass('Successfully removed all components (empty components object)');
+    } else {
+      fail('Failed to remove all components', {
+        expected: 'empty components object',
+        actual: finalEntity2.components,
+      });
+    }
+
+    // Test 6c: Remove and add same component key (should fail)
+    info('Test 6c: Validation - Remove and add same component (should fail with 400)');
+    try {
+      const cid4 = await uploadTestFile('new-comp1', 'new-comp1.txt');
+      await appendVersion(entity.pi, updated2.tip, {
+        components: { 'comp1': cid4 },
+        components_remove: ['comp1'],
+        note: 'Should fail',
+      });
+      fail('Should have rejected removing and adding same component');
+    } catch (error: any) {
+      if (error.message.includes('HTTP 400')) {
+        pass('Correctly rejected removing and adding same component');
+      } else {
+        fail('Wrong error type for remove/add conflict', error);
+      }
+    }
+
+    // Test 6d: Remove non-existent component (should fail)
+    info('Test 6d: Validation - Remove non-existent component (should fail with 400)');
+    try {
+      const cid5 = await uploadTestFile('comp5', 'comp5.txt');
+      const entity2 = await createEntity({ 'comp5': cid5 });
+
+      await appendVersion(entity2.pi, entity2.tip, {
+        components_remove: ['nonexistent'],
+        note: 'Should fail',
+      });
+      fail('Should have rejected removing non-existent component');
+    } catch (error: any) {
+      if (error.message.includes('HTTP 400')) {
+        pass('Correctly rejected removing non-existent component');
+      } else {
+        fail('Wrong error type for non-existent component', error);
+      }
+    }
+
+    // Test 6e: Empty components_remove array (should be no-op)
+    info('Test 6e: Empty components_remove array (no-op)');
+    const cid6 = await uploadTestFile('comp6', 'comp6.txt');
+    const entity3 = await createEntity({ 'comp6': cid6 });
+
+    const updated3 = await appendVersion(entity3.pi, entity3.tip, {
+      components_remove: [],
+      note: 'Empty remove array',
+    });
+
+    const finalEntity3 = await getEntity(entity3.pi);
+
+    if (finalEntity3.components['comp6'] && finalEntity3.ver === 2) {
+      pass('Empty components_remove array is a valid no-op');
+    } else {
+      fail('Empty components_remove array caused unexpected behavior');
+    }
+
+    // Test 6f: Reorganization use case - remove old components, add new
+    info('Test 6f: Reorganization use case - remove old files, add description');
+    const file1 = await uploadTestFile('file1', 'file1.pdf');
+    const file2 = await uploadTestFile('file2', 'file2.pdf');
+    const file3 = await uploadTestFile('file3', 'file3.pdf');
+
+    const parent = await createEntity({
+      'file1.pdf': file1,
+      'file2.pdf': file2,
+      'file3.pdf': file3,
+    }, { note: 'Parent with 3 files' });
+
+    // Create child group with same files
+    const child = await createEntity({
+      'file1.pdf': file1,
+      'file2.pdf': file2,
+    }, { note: 'Child group' });
+
+    // Remove files from parent that moved to child, add description
+    const desc = await uploadTestFile('Files moved to child group', 'description.txt');
+    const reorganized = await appendVersion(parent.pi, parent.tip, {
+      components_remove: ['file1.pdf', 'file2.pdf'],
+      components: { 'description.txt': desc },
+      children_pi_add: [child.pi],
+      note: 'Reorganized into child group',
+    });
+
+    const finalParent = await getEntity(parent.pi);
+
+    const hasOnlyFile3AndDesc =
+      !finalParent.components['file1.pdf'] &&
+      !finalParent.components['file2.pdf'] &&
+      finalParent.components['file3.pdf'] &&
+      finalParent.components['description.txt'] &&
+      finalParent.children_pi.includes(child.pi);
+
+    if (hasOnlyFile3AndDesc) {
+      pass('Reorganization use case: removed files, added description, added child');
+    } else {
+      fail('Reorganization use case failed', {
+        expected: 'file1,file2 removed; file3,description present; child added',
+        actual: {
+          components: Object.keys(finalParent.components),
+          children: finalParent.children_pi,
+        },
+      });
+    }
+
+  } catch (error) {
+    fail('Component removal test failed', error);
+  }
+}
+
+/**
  * Main test runner
  */
 async function runAllTests(): Promise<void> {
@@ -620,6 +788,10 @@ async function runAllTests(): Promise<void> {
     } else {
       warn('Skipping extreme stress test (set RUN_STRESS=true to enable)');
     }
+
+    // Test 6: Component removal
+    await testComponentRemoval();
+    await sleep(500);
 
   } catch (error) {
     log('red', `\nFatal error during test execution: ${error}`);

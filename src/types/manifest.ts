@@ -101,6 +101,7 @@ export interface CreateEntityResponse {
 export interface AppendVersionRequest {
   expect_tip: string; // CAS guard
   components?: Record<string, string>; // partial updates ok
+  components_remove?: string[]; // component keys to remove
   children_pi_add?: string[];
   children_pi_remove?: string[];
   note?: string;
@@ -169,6 +170,7 @@ export const CreateEntityRequestSchema = z.object({
 export const AppendVersionRequestSchema = z.object({
   expect_tip: z.string().min(1),
   components: z.record(z.string()).optional(),
+  components_remove: z.array(z.string()).optional(),
   children_pi_add: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/)).optional(),
   children_pi_remove: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/)).optional(),
   note: z.string().optional(),

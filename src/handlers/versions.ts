@@ -96,6 +96,33 @@ async function appendVersionAttempt(
     validateCIDRecord(body.components, 'components');
   }
 
+  // Validate components_remove
+  if (body.components_remove) {
+    // Check that all keys to be removed exist in current manifest
+    for (const key of body.components_remove) {
+      if (!(key in oldManifest.components)) {
+        throw new ValidationError(
+          `Cannot remove component '${key}': not found in manifest`,
+          { available_keys: Object.keys(oldManifest.components) }
+        );
+      }
+    }
+
+    // Check for conflicts between components_remove and components
+    if (body.components) {
+      const removeSet = new Set(body.components_remove);
+      const addSet = new Set(Object.keys(body.components));
+      const conflicts = [...removeSet].filter((key) => addSet.has(key));
+
+      if (conflicts.length > 0) {
+        throw new ValidationError(
+          `Cannot remove and add same components: ${conflicts.join(', ')}`,
+          { conflicting_keys: conflicts }
+        );
+      }
+    }
+  }
+
   // Validate child count limits
   if (body.children_pi_add && body.children_pi_add.length > MAX_CHILDREN_PER_REQUEST) {
     throw new ValidationError(
@@ -112,8 +139,17 @@ async function appendVersionAttempt(
   // Compute new manifest
   const now = new Date().toISOString();
 
-  // Merge components (carry forward unchanged, apply updates)
+  // Process component changes (remove first, then add/update)
   const newComponents = { ...oldManifest.components };
+
+  // 1. Remove components
+  if (body.components_remove) {
+    for (const key of body.components_remove) {
+      delete newComponents[key];
+    }
+  }
+
+  // 2. Add/update components
   if (body.components) {
     for (const [label, cid] of Object.entries(body.components)) {
       newComponents[label] = link(cid);

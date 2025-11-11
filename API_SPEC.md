@@ -448,6 +448,7 @@ Append new version (CAS-protected).
   "components": {
     "metadata": "bafybeinew123..."  // partial updates ok
   },
+  "components_remove": ["old-file.txt"],  // optional: remove component keys
   "children_pi_add": ["01NEW..."],
   "children_pi_remove": ["01OLD..."],
   "note": "Updated metadata"
@@ -464,6 +465,34 @@ Append new version (CAS-protected).
 }
 ```
 
+**Component Removal:**
+The `components_remove` parameter allows removing component keys from the manifest:
+- **Array of strings:** List of component keys to remove from the manifest
+- **Validation:** All keys must exist in the current manifest (400 error if not found)
+- **Conflict checking:** Cannot remove and add the same key in one request (400 error)
+- **Processing order:** Removals are processed BEFORE additions
+- **Empty array:** Valid no-op operation
+- **Use case:** File reorganization - move files from parent to child entities without leaving duplicate references
+
+**Example - File Reorganization:**
+```json
+{
+  "expect_tip": "bafybeiabc789...",
+  "components_remove": ["file1.pdf", "file2.pdf"],  // Remove files moved to children
+  "components": {
+    "description.txt": "bafybeidesc..."  // Add reorganization note
+  },
+  "children_pi_add": ["01GROUP1", "01GROUP2"],
+  "note": "Reorganized files into groups"
+}
+```
+
+**Processing Order:**
+1. Remove components (from `components_remove`)
+2. Add/update components (from `components`)
+3. Remove children (from `children_pi_remove`)
+4. Add children (from `children_pi_add`)
+
 **Bidirectional Relationships:**
 When using `children_pi_add` or `children_pi_remove`, the API automatically maintains bidirectional relationships:
 - **Adding children:** Each child entity is automatically updated with `parent_pi` set to this entity's PI (bulk operation supported)
@@ -474,7 +503,7 @@ When using `children_pi_add` or `children_pi_remove`, the API automatically main
 - **Maximum limit: 100 children per array** (enforced)
 
 **Errors:**
-- `400` - Invalid request body (including exceeding 100-child limit)
+- `400` - Invalid request body (including exceeding 100-child limit, non-existent component key in `components_remove`, or same key in both `components` and `components_remove`)
 - `404` - Entity not found
 - `409` - CAS failure (tip changed)
 
