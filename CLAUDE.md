@@ -123,6 +123,52 @@ All errors converted to JSON responses via `errorToResponse()`
 
 ## Important Implementation Details
 
+### Testnet (Network Isolation)
+
+The API supports separate test and main networks to prevent mixing test and production data.
+
+**Network Header:**
+- Header: `X-Arke-Network: main` (default) or `X-Arke-Network: test`
+- Missing header defaults to `main` (backward compatible)
+- Invalid header value returns 400 error
+
+**PI Prefix Convention:**
+- **Main network**: Standard ULIDs (e.g., `01K75HQQXNTDG7BBP7PS9AWYAN`)
+- **Test network**: PIs prefixed with `II` (e.g., `IIAK75HQQXNTDG7BBP7PS9AWY`)
+- `II` prefix uses the letter 'I' which is excluded from Crockford Base32, making it impossible for a real ULID to ever start with `II`
+- Server-generated test PIs automatically get the `II` prefix
+- Client-provided test PIs must start with `II`
+
+**MFS Storage Paths:**
+- **Main**: `/arke/index/{shard1}/{shard2}/{pi}.tip`
+- **Test**: `/arke/test/index/{shard1}/{shard2}/{pi}.tip`
+
+**Cross-Network Prevention:**
+All endpoints validate that PIs match the requested network:
+- Cannot create test entity with main network parent
+- Cannot add main network children to test entity
+- Cannot access test entity without `X-Arke-Network: test` header
+- Error: 400 `VALIDATION_ERROR` with message explaining network mismatch
+
+**Implementation Files:**
+- `src/types/network.ts` - Network type, validation helpers, PI prefix constants
+- `src/utils/ulid.ts` - `generatePi(network)` function
+- `src/services/tip.ts` - Network-aware MFS paths
+
+**Usage Example:**
+```bash
+# Create entity on test network
+curl -X POST http://localhost:8787/entities \
+  -H "X-Arke-Network: test" \
+  -H "Content-Type: application/json" \
+  -d '{"components": {"data": "bafyrei..."}}'
+# Returns: {"pi": "IIAK75HQQ...", "ver": 1, ...}
+
+# Access test entity (requires header)
+curl http://localhost:8787/entities/IIAK75HQQ... \
+  -H "X-Arke-Network: test"
+```
+
 ### Atomic CAS Protection (Race Condition Prevention)
 
 All write operations use atomic Compare-And-Swap (CAS) to prevent data loss from concurrent updates.

@@ -5,7 +5,8 @@ import { validateEnv, getIPFSURL, getBackendURL, getArkePI } from './config';
 import { IPFSService } from './services/ipfs';
 import { TipService } from './services/tip';
 import { createEntity, getEntity } from './services/entity-ops';
-import { errorToResponse } from './utils/errors';
+import { errorToResponse, ValidationError } from './utils/errors';
+import { Network, NETWORK_HEADER } from './types/network';
 
 // Handlers
 import { uploadHandler } from './handlers/upload';
@@ -27,6 +28,7 @@ import { downloadHandler } from './handlers/download';
 type Variables = {
   ipfs: IPFSService;
   tipService: TipService;
+  network: Network;
 };
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -42,13 +44,29 @@ app.use('*', async (c, next) => {
     // Validate environment
     validateEnv(env);
 
+    // Parse network header (default to 'main')
+    const networkHeader = c.req.header(NETWORK_HEADER);
+    let network: Network = 'main';
+
+    if (networkHeader) {
+      if (networkHeader !== 'main' && networkHeader !== 'test') {
+        throw new ValidationError(
+          `Invalid ${NETWORK_HEADER} header: must be 'main' or 'test'`,
+          { received: networkHeader }
+        );
+      }
+      network = networkHeader as Network;
+    }
+
+    c.set('network', network);
+
     // Initialize IPFS service
     const ipfsURL = getIPFSURL(env);
     const ipfs = new IPFSService(ipfsURL);
     c.set('ipfs', ipfs);
 
-    // Initialize Tip service
-    const tipService = new TipService(ipfs);
+    // Initialize Tip service (network-aware)
+    const tipService = new TipService(ipfs, network);
     c.set('tipService', tipService);
 
     await next();
@@ -105,10 +123,12 @@ app.post('/relations', updateRelationsHandler);
 app.get('/resolve/:pi', resolveHandler);
 
 // POST /arke/init - Initialize Arke origin block if it doesn't exist
+// Note: Arke origin block always uses main network (ARKE_PI starts with '00', not 'II')
 app.post('/arke/init', async (c) => {
   const ARKE_PI = getArkePI(c.env);
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
+  const network: Network = c.get('network');
   const backendURL = getBackendURL(c.env);
 
   try {
@@ -136,11 +156,12 @@ app.post('/arke/init', async (c) => {
     const metadataCid = uploadResults[0].Hash;
 
     // Create entity using service layer
+    // ARKE_PI is a special fixed PI that belongs to main network
     const response = await createEntity(ipfs, tipSvc, backendURL, {
       pi: ARKE_PI,
       components: { metadata: metadataCid },
       note: 'Genesis entity - root of the archive tree',
-    });
+    }, network);
 
     return c.json({
       message: 'Arke origin block initialized',

@@ -13,6 +13,7 @@ import {
   AppendVersionResponse,
   UpdateRelationsRequestSchema,
 } from '../types/manifest';
+import { Network, validatePiMatchesNetwork } from '../types/network';
 
 // Maximum number of children that can be added/removed in a single request
 const MAX_CHILDREN_PER_REQUEST = 100;
@@ -30,9 +31,27 @@ export async function updateRelationsHandler(c: Context): Promise<Response> {
 
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
+  const network: Network = c.get('network');
 
   // Parse body ONCE (can't re-read request body stream)
   const body = await validateBody(c.req.raw, UpdateRelationsRequestSchema);
+
+  // Validate parent_pi matches network
+  validatePiMatchesNetwork(body.parent_pi, network);
+
+  // Validate add_children match network (prevents cross-network relationships)
+  if (body.add_children) {
+    for (const childPi of body.add_children) {
+      validatePiMatchesNetwork(childPi, network);
+    }
+  }
+
+  // Validate remove_children match network
+  if (body.remove_children) {
+    for (const childPi of body.remove_children) {
+      validatePiMatchesNetwork(childPi, network);
+    }
+  }
 
   for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
     try {

@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
 /**
+ * PI (Persistent Identifier) regex that accepts both main and test networks:
+ * - Main network: Standard ULID (26 chars, Crockford Base32)
+ * - Test network: 'II' prefix + 24 chars (II is impossible in real ULIDs)
+ */
+const PI_REGEX = /^(?:II[0-9A-HJKMNP-TV-Z]{24}|[0-9A-HJKMNP-TV-Z]{26})$/;
+
+/**
  * IPLD link format: { "/": "<cid>" }
  * Used for dag-cbor encoding to create proper DAG links
  */
@@ -57,13 +64,13 @@ export const IPLDLinkSchema = z.object({
 
 export const ManifestV1Schema = z.object({
   schema: z.literal('arke/manifest@v1'),
-  pi: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/, 'Invalid ULID'),
+  pi: z.string().regex(PI_REGEX, 'Invalid PI'),
   ver: z.number().int().positive(),
   ts: z.string().datetime(),
   prev: IPLDLinkSchema.nullable(),
   components: z.record(IPLDLinkSchema),
-  children_pi: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/)).optional(),
-  parent_pi: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
+  children_pi: z.array(z.string().regex(PI_REGEX)).optional(),
+  parent_pi: z.string().regex(PI_REGEX).optional(),
   note: z.string().optional(),
 });
 
@@ -74,7 +81,7 @@ export const SnapshotIndexSchema = z.object({
   prev: IPLDLinkSchema.nullable(),
   entries: z.array(
     z.object({
-      pi: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+      pi: z.string().regex(PI_REGEX),
       ver: z.number().int().positive(),
       tip: IPLDLinkSchema,
     })
@@ -160,10 +167,10 @@ export interface UploadResponse {
 // Validation schemas for API requests
 
 export const CreateEntityRequestSchema = z.object({
-  pi: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
+  pi: z.string().regex(PI_REGEX).optional(),
   components: z.record(z.string()),
-  children_pi: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/)).optional(),
-  parent_pi: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/).optional(),
+  children_pi: z.array(z.string().regex(PI_REGEX)).optional(),
+  parent_pi: z.string().regex(PI_REGEX).optional(),
   note: z.string().optional(),
 });
 
@@ -171,15 +178,15 @@ export const AppendVersionRequestSchema = z.object({
   expect_tip: z.string().min(1),
   components: z.record(z.string()).optional(),
   components_remove: z.array(z.string()).optional(),
-  children_pi_add: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/)).optional(),
-  children_pi_remove: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/)).optional(),
+  children_pi_add: z.array(z.string().regex(PI_REGEX)).optional(),
+  children_pi_remove: z.array(z.string().regex(PI_REGEX)).optional(),
   note: z.string().optional(),
 });
 
 export const UpdateRelationsRequestSchema = z.object({
-  parent_pi: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/),
+  parent_pi: z.string().regex(PI_REGEX),
   expect_tip: z.string().min(1),
-  add_children: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/)).optional(),
-  remove_children: z.array(z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/)).optional(),
+  add_children: z.array(z.string().regex(PI_REGEX)).optional(),
+  remove_children: z.array(z.string().regex(PI_REGEX)).optional(),
   note: z.string().optional(),
 });

@@ -1,6 +1,6 @@
 import { IPFSService } from './ipfs';
 import { TipService } from './tip';
-import { ulid } from '../utils/ulid';
+import { generatePi } from '../utils/ulid';
 import { validateCIDRecord } from '../utils/cid';
 import { ConflictError, TipWriteRaceError } from '../utils/errors';
 import { appendEvent } from '../clients/ipfs-server';
@@ -11,6 +11,11 @@ import {
   CreateEntityResponse,
   GetEntityResponse,
 } from '../types/manifest';
+import {
+  Network,
+  validatePiMatchesNetwork,
+  assertValidPi,
+} from '../types/network';
 
 /**
  * Create a new entity (extracted core logic from createEntityHandler)
@@ -20,10 +25,32 @@ export async function createEntity(
   ipfs: IPFSService,
   tipSvc: TipService,
   backendURL: string,
-  req: CreateEntityRequest
+  req: CreateEntityRequest,
+  network: Network = 'main'
 ): Promise<CreateEntityResponse> {
   // Generate or validate PI
-  const pi = req.pi || ulid();
+  let pi: string;
+  if (req.pi) {
+    // Client-provided PI: validate format and network match
+    assertValidPi(req.pi, network, 'pi');
+    validatePiMatchesNetwork(req.pi, network);
+    pi = req.pi;
+  } else {
+    // Server-generated PI for the appropriate network
+    pi = generatePi(network);
+  }
+
+  // Validate parent_pi matches network (prevents cross-network relationships)
+  if (req.parent_pi) {
+    validatePiMatchesNetwork(req.parent_pi, network);
+  }
+
+  // Validate all children_pi match network (prevents cross-network relationships)
+  if (req.children_pi) {
+    for (const childPi of req.children_pi) {
+      validatePiMatchesNetwork(childPi, network);
+    }
+  }
 
   // Check for collision
   const exists = await tipSvc.tipExists(pi);

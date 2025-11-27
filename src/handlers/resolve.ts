@@ -1,6 +1,7 @@
 import { Context } from 'hono';
 import { TipService } from '../services/tip';
 import type { ResolveResponse } from '../types/manifest';
+import { Network, validatePiMatchesNetwork } from '../types/network';
 
 /**
  * GET /resolve/:pi
@@ -9,8 +10,12 @@ import type { ResolveResponse } from '../types/manifest';
  */
 export async function resolveHandler(c: Context): Promise<Response> {
   const tipSvc: TipService = c.get('tipService');
+  const network: Network = c.get('network');
 
   const pi = c.req.param('pi');
+
+  // Validate PI matches the requested network
+  validatePiMatchesNetwork(pi, network);
 
   // Read tip CID
   const tipCid = await tipSvc.readTip(pi);

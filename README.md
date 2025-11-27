@@ -33,6 +33,28 @@ This service orchestrates IPFS RPC calls to manage:
    npm run deploy
    ```
 
+## Testnet Support
+
+The API supports separate test and production networks to prevent mixing test data with real data.
+
+**Quick Start:**
+```bash
+# Create entity on test network
+curl -X POST https://api.arke.institute/entities \
+  -H "X-Arke-Network: test" \
+  -H "Content-Type: application/json" \
+  -d '{"components": {"data": "bafyrei..."}}'
+# Returns PI with "II" prefix: {"pi": "IIAK75HQQ...", ...}
+```
+
+**Key Features:**
+- Add `X-Arke-Network: test` header to use testnet (default is `main`)
+- Test PIs are prefixed with `II` (impossible in real ULIDs)
+- Test data stored separately in `/arke/test/index/`
+- Cross-network relationships are blocked (can't mix test/main parent-child)
+
+See [TESTNET.md](./TESTNET.md) for complete documentation.
+
 ## API Endpoints
 
 ### `POST /upload`
@@ -118,3 +140,4 @@ See [tests/integration/README.md](./tests/integration/README.md) for complete te
 ## See Also
 
 - [IPFS API Complete Guide](./IPFS_API_Complete_Guide.md)
+- [Testnet Guide](./TESTNET.md)

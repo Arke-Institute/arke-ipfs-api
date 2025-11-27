@@ -9,6 +9,7 @@ import {
   ManifestV1,
   CreateEntityRequestSchema,
 } from '../types/manifest';
+import { Network, validatePiMatchesNetwork } from '../types/network';
 
 /**
  * POST /entities
@@ -17,13 +18,14 @@ import {
 export async function createEntityHandler(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
+  const network: Network = c.get('network');
   const backendURL = getBackendURL(c.env);
 
   // Validate request body
   const body = await validateBody(c.req.raw, CreateEntityRequestSchema);
 
-  // Call service layer
-  const response = await createEntity(ipfs, tipSvc, backendURL, body);
+  // Call service layer (network validation happens inside createEntity)
+  const response = await createEntity(ipfs, tipSvc, backendURL, body, network);
 
   return c.json(response, 201);
 }
@@ -35,7 +37,11 @@ export async function createEntityHandler(c: Context): Promise<Response> {
 export async function getEntityHandler(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
+  const network: Network = c.get('network');
   const pi = c.req.param('pi');
+
+  // Validate PI matches the requested network
+  validatePiMatchesNetwork(pi, network);
 
   // Call service layer
   const response = await getEntity(ipfs, tipSvc, pi);

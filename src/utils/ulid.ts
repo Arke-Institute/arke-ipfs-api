@@ -1,3 +1,5 @@
+import { Network, TEST_PI_PREFIX } from '../types/network';
+
 /**
  * ULID validation regex
  * ULIDs are 26 characters, using Crockford's base32 alphabet
@@ -81,7 +83,26 @@ export function assertValidUlid(value: string, label: string = 'ULID'): void {
  * Extract shard prefix for MFS path organization
  * Returns [first2chars, next2chars] for sharding
  * Example: "01J8ME3H6FZ3KQ5W1P2XY8K7E5" -> ["01", "J8"]
+ * Example: "IIAK75HQQXNTDG7BBP7PS9AWY" -> ["II", "AK"]
  */
 export function shard2(ulid: string): [string, string] {
   return [ulid.slice(0, 2), ulid.slice(2, 4)];
+}
+
+/**
+ * Generate a PI (Persistent Identifier) for the specified network
+ *
+ * - Main network: Standard ULID (timestamp + random)
+ * - Test network: 'II' prefix + 24 chars from ULID (drops first 2 timestamp chars)
+ *
+ * Test PIs use 'II' prefix because 'I' is excluded from Crockford Base32,
+ * making it impossible for a real ULID to ever start with 'II'.
+ */
+export function generatePi(network: Network = 'main'): string {
+  const id = ulid();
+  if (network === 'test') {
+    // Replace first 2 chars with test prefix
+    return TEST_PI_PREFIX + id.slice(2);
+  }
+  return id;
 }

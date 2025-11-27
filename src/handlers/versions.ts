@@ -20,6 +20,7 @@ import {
   ListVersionsResponse,
   GetEntityResponse,
 } from '../types/manifest';
+import { Network, validatePiMatchesNetwork } from '../types/network';
 
 // Maximum number of children that can be added/removed in a single request
 const MAX_CHILDREN_PER_REQUEST = 100;
@@ -38,10 +39,28 @@ export async function appendVersionHandler(c: Context): Promise<Response> {
 
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
+  const network: Network = c.get('network');
   const pi = c.req.param('pi');
+
+  // Validate PI matches the requested network
+  validatePiMatchesNetwork(pi, network);
 
   // Parse body ONCE (can't re-read request body stream)
   const body = await validateBody(c.req.raw, AppendVersionRequestSchema);
+
+  // Validate children_pi_add match network (prevents cross-network relationships)
+  if (body.children_pi_add) {
+    for (const childPi of body.children_pi_add) {
+      validatePiMatchesNetwork(childPi, network);
+    }
+  }
+
+  // Validate children_pi_remove match network
+  if (body.children_pi_remove) {
+    for (const childPi of body.children_pi_remove) {
+      validatePiMatchesNetwork(childPi, network);
+    }
+  }
 
   for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
     try {
@@ -292,8 +311,13 @@ async function appendVersionAttempt(
 export async function listVersionsHandler(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
+  const network: Network = c.get('network');
 
   const pi = c.req.param('pi');
+
+  // Validate PI matches the requested network
+  validatePiMatchesNetwork(pi, network);
+
   const { limit, cursor } = validatePagination(new URL(c.req.url));
 
   // Start from cursor or tip
@@ -345,8 +369,13 @@ export async function listVersionsHandler(c: Context): Promise<Response> {
 export async function getVersionHandler(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
+  const network: Network = c.get('network');
 
   const pi = c.req.param('pi');
+
+  // Validate PI matches the requested network
+  validatePiMatchesNetwork(pi, network);
+
   const selectorParam = c.req.param('selector');
 
   const selector = parseVersionSelector(selectorParam);

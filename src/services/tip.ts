@@ -2,16 +2,32 @@ import { IPFSService } from './ipfs';
 import { shard2 } from '../utils/ulid';
 import { NotFoundError, IPFSError, TipWriteRaceError } from '../utils/errors';
 import { generateShardPairsFromCursor } from '../utils/shard';
+import { Network } from '../types/network';
 
 /**
  * Tip file management in MFS
- * Tips are stored at: /arke/index/<shard2[0]>/<shard2[1]>/<PI>.tip
+ *
+ * Tips are stored at network-specific paths:
+ * - Main: /arke/index/<shard2[0]>/<shard2[1]>/<PI>.tip
+ * - Test: /arke/test/index/<shard2[0]>/<shard2[1]>/<PI>.tip
+ *
  * Each .tip file contains a single line: <manifest_cid>\n
  */
 export class TipService {
-  private readonly baseDir = '/arke/index';
+  private readonly baseDir: string;
+  private readonly network: Network;
 
-  constructor(private ipfs: IPFSService) {}
+  constructor(private ipfs: IPFSService, network: Network = 'main') {
+    this.network = network;
+    this.baseDir = network === 'test' ? '/arke/test/index' : '/arke/index';
+  }
+
+  /**
+   * Get the network this TipService operates on
+   */
+  getNetwork(): Network {
+    return this.network;
+  }
 
   /**
    * Build MFS path for PI's .tip file
