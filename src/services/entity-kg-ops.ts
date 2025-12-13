@@ -551,11 +551,31 @@ export async function mergeEntityKG(
       }
     }
 
-    // Target merged into something else (not us) - this is an error
+    // Target merged into something else (not us) - RESTORE SOURCE and error
     // The caller should retry with the new target
+    console.log(`[ENTITY-KG] Target ${finalTargetId} merged into ${targetMerged.merged_into} during operation, restoring source`);
+
+    const restoredSource: EntityManifestV1 = {
+      ...source,
+      ver: source.ver + 2, // +1 for failed merge, +1 for restore
+      ts: new Date().toISOString(),
+      prev: link(sourceMergedCid),
+      note: `Restored: target ${finalTargetId} was merged during operation`,
+    };
+
+    const restoredCid = await ipfs.dagPut(restoredSource);
+
+    try {
+      await tipSvc.writeEntityTipAtomic(sourceEntityId, restoredCid, sourceMergedCid);
+      console.log(`[ENTITY-KG] Restored source ${sourceEntityId} after target-merged-during-operation`);
+    } catch {
+      // CAS fail is unlikely here but log it
+      console.log(`[ENTITY-KG] Source restore CAS failed (unexpected)`);
+    }
+
     throw new ConflictError(
       'Entity',
-      `Target ${finalTargetId} was merged into ${targetMerged.merged_into} during operation`
+      `Target ${finalTargetId} was merged into ${targetMerged.merged_into} during operation. Source restored - please retry.`
     );
   }
 
