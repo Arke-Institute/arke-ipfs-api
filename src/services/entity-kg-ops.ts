@@ -5,16 +5,20 @@ import { link } from '../types/manifest';
 import {
   EntityManifestV1,
   EntityMergedV1,
+  EntityDeletedV1,
   CreateEntityKGRequest,
   CreateEntityKGResponse,
   GetEntityKGResponse,
   GetEntityMergedResponse,
+  GetEntityDeletedResponse,
   MergeEntityResponse,
   MergeConflictResponse,
   AppendEntityVersionRequest,
   AppendEntityVersionResponse,
   LightweightEntity,
   toLightweight,
+  UnmergeEntityResponse,
+  DeleteEntityResponse,
 } from '../types/entity-manifest';
 import { RelationshipsComponent } from '../types/relationships';
 import { ConflictError, NotFoundError, CASError, ValidationError } from '../utils/errors';
@@ -281,19 +285,19 @@ export async function createEntityKG(
 
 /**
  * Get an entity by ID
- * Returns redirect info if entity was merged
+ * Returns redirect info if entity was merged, or deleted info if deleted
  */
 export async function getEntityKG(
   ipfs: IPFSService,
   tipSvc: TipService,
   entityId: string
-): Promise<GetEntityKGResponse | GetEntityMergedResponse> {
+): Promise<GetEntityKGResponse | GetEntityMergedResponse | GetEntityDeletedResponse> {
   const tipCid = await tipSvc.readEntityTip(entityId);
   if (!tipCid) {
     throw new NotFoundError('Entity', entityId);
   }
 
-  const manifest = (await ipfs.dagGet(tipCid)) as EntityManifestV1 | EntityMergedV1;
+  const manifest = (await ipfs.dagGet(tipCid)) as EntityManifestV1 | EntityMergedV1 | EntityDeletedV1;
 
   // Handle merged entity - return redirect info
   if (manifest.schema === 'arke/entity-merged@v1') {
@@ -304,6 +308,18 @@ export async function getEntityKG(
       merged_into: merged.merged_into,
       merged_at: merged.ts,
       prev_cid: merged.prev['/'],
+    };
+  }
+
+  // Handle deleted entity - return tombstone info
+  if (manifest.schema === 'arke/entity-deleted@v1') {
+    const deleted = manifest as EntityDeletedV1;
+    return {
+      status: 'deleted',
+      entity_id: deleted.entity_id,
+      deleted_at: deleted.ts,
+      deleted_ver: deleted.ver,
+      prev_cid: deleted.prev['/'],
     };
   }
 
@@ -833,4 +849,310 @@ export async function mergeEntityKG(
   }
 
   throw new ConflictError('Entity', `Max retries exceeded updating target ${finalTargetId}`);
+}
+
+// Maximum hops when walking version history
+const MAX_HISTORY_HOPS = 100;
+
+/**
+ * Find a specific version in an entity's history by walking the prev chain.
+ *
+ * @param ipfs - IPFS service
+ * @param startCid - CID to start from (current tip)
+ * @param targetVer - Version number to find
+ * @returns The manifest and CID at that version, or null if not found
+ */
+async function findVersionInHistory(
+  ipfs: IPFSService,
+  startCid: string,
+  targetVer: number
+): Promise<{ manifest: EntityManifestV1; cid: string } | null> {
+  let currentCid = startCid;
+  let hops = 0;
+
+  while (hops < MAX_HISTORY_HOPS) {
+    const manifest = (await ipfs.dagGet(currentCid)) as EntityManifestV1 | EntityMergedV1;
+
+    // Check if this is the version we're looking for
+    if (manifest.ver === targetVer) {
+      // Must be a real entity manifest, not a merged redirect
+      if (manifest.schema === 'arke/entity-merged@v1') {
+        // This version is a merge redirect, not a real entity
+        return null;
+      }
+      return { manifest: manifest as EntityManifestV1, cid: currentCid };
+    }
+
+    // If we've gone past the target version, it doesn't exist
+    if (manifest.ver < targetVer) {
+      return null;
+    }
+
+    // Follow prev link
+    if (!manifest.prev) {
+      return null;
+    }
+
+    currentCid = manifest.prev['/'];
+    hops++;
+  }
+
+  throw new ValidationError(
+    `Version history too deep (>${MAX_HISTORY_HOPS} hops)`,
+    { startCid, targetVer }
+  );
+}
+
+/**
+ * Unmerge an entity - restore it from merged state back to active.
+ *
+ * This operation:
+ * 1. Validates the entity is currently merged
+ * 2. Finds the restore point (prev or specific version)
+ * 3. Creates a new version with restored data
+ * 4. Does NOT modify the target entity
+ *
+ * @param ipfs - IPFS service
+ * @param tipSvc - Tip service
+ * @param backendURL - Backend API URL for events
+ * @param entityId - Entity ID to unmerge
+ * @param expectTip - CAS guard (current tip CID)
+ * @param options - Optional settings (restore_from_ver, note, skipSync)
+ * @returns Response with restored entity details
+ */
+export async function unmergeEntityKG(
+  ipfs: IPFSService,
+  tipSvc: TipService,
+  backendURL: string,
+  entityId: string,
+  expectTip: string,
+  options?: {
+    restoreFromVer?: number;
+    note?: string;
+    skipSync?: boolean;
+  }
+): Promise<UnmergeEntityResponse> {
+  // ==========================================================================
+  // STEP 1: VALIDATE - Entity must be merged
+  // ==========================================================================
+  const currentTip = await tipSvc.readEntityTip(entityId);
+  if (!currentTip) {
+    throw new NotFoundError('Entity', entityId);
+  }
+
+  // CAS check
+  if (currentTip !== expectTip) {
+    throw new CASError({ actual: currentTip, expect: expectTip });
+  }
+
+  const currentManifest = (await ipfs.dagGet(currentTip)) as EntityManifestV1 | EntityMergedV1;
+
+  // Must be a merged entity
+  if (currentManifest.schema !== 'arke/entity-merged@v1') {
+    throw new ValidationError(
+      `Entity is not merged (schema: ${currentManifest.schema})`,
+      { entityId, schema: currentManifest.schema }
+    );
+  }
+
+  const mergedManifest = currentManifest as EntityMergedV1;
+  const wasMergedInto = mergedManifest.merged_into;
+
+  console.log(`[ENTITY-KG] Unmerging entity ${entityId} (was merged into ${wasMergedInto})`);
+
+  // ==========================================================================
+  // STEP 2: FIND RESTORE POINT
+  // ==========================================================================
+  let restoreManifest: EntityManifestV1;
+  let restoreCid: string;
+
+  if (options?.restoreFromVer !== undefined) {
+    // Find specific version in history
+    const found = await findVersionInHistory(ipfs, currentTip, options.restoreFromVer);
+    if (!found) {
+      throw new NotFoundError('Version', `${options.restoreFromVer} in entity ${entityId}`);
+    }
+    restoreManifest = found.manifest;
+    restoreCid = found.cid;
+  } else {
+    // Use prev link (last version before merge)
+    const prevCid = mergedManifest.prev['/'];
+    const prevManifest = (await ipfs.dagGet(prevCid)) as EntityManifestV1 | EntityMergedV1;
+
+    // Prev should be a real entity manifest
+    if (prevManifest.schema === 'arke/entity-merged@v1') {
+      throw new ValidationError(
+        'Previous version is also a merge redirect - cannot restore',
+        { entityId, prevCid }
+      );
+    }
+
+    restoreManifest = prevManifest as EntityManifestV1;
+    restoreCid = prevCid;
+  }
+
+  console.log(`[ENTITY-KG] Restoring from v${restoreManifest.ver} (cid: ${restoreCid})`);
+
+  // ==========================================================================
+  // STEP 3: BUILD RESTORED MANIFEST
+  // ==========================================================================
+  const now = new Date().toISOString();
+
+  const restoredManifest: EntityManifestV1 = {
+    schema: 'arke/entity@v1',
+    entity_id: entityId,
+    created_by_pi: restoreManifest.created_by_pi,
+    created_at: restoreManifest.created_at,
+    ver: mergedManifest.ver + 1,
+    ts: now,
+    prev: link(currentTip), // Link to merged version (maintains full history)
+    type: restoreManifest.type,
+    label: restoreManifest.label,
+    description: restoreManifest.description,
+    components: restoreManifest.components,
+    source_pis: restoreManifest.source_pis,
+    note: options?.note || `Restored from merge (was merged into ${wasMergedInto})`,
+  };
+
+  // ==========================================================================
+  // STEP 4: WRITE ATOMICALLY
+  // ==========================================================================
+  const restoredCid = await ipfs.dagPut(restoredManifest);
+  await tipSvc.writeEntityTipAtomic(entityId, restoredCid, currentTip);
+
+  console.log(`[ENTITY-KG] Unmerged entity ${entityId} to v${restoredManifest.ver}`);
+
+  // ==========================================================================
+  // STEP 5: APPEND EVENT
+  // ==========================================================================
+  try {
+    const eventCid = await appendEvent(backendURL, {
+      type: 'update',
+      pi: entityId,
+      ver: restoredManifest.ver,
+      tip_cid: restoredCid,
+    });
+    console.log(`[EVENT] Appended unmerge event for entity ${entityId}: ${eventCid}`);
+  } catch (error) {
+    console.error(`[EVENT] Failed to append unmerge event for entity ${entityId}:`, error);
+  }
+
+  return {
+    entity_id: entityId,
+    restored_from_ver: restoreManifest.ver,
+    new_ver: restoredManifest.ver,
+    new_manifest_cid: restoredCid,
+    was_merged_into: wasMergedInto,
+  };
+}
+
+/**
+ * Delete an entity - creates a tombstone manifest preserving history.
+ *
+ * This operation:
+ * 1. Validates the entity exists and is active (not merged/deleted)
+ * 2. Creates a tombstone manifest with only prev link
+ * 3. History is preserved via the prev chain
+ *
+ * @param ipfs - IPFS service
+ * @param tipSvc - Tip service
+ * @param backendURL - Backend API URL for events
+ * @param entityId - Entity ID to delete
+ * @param expectTip - CAS guard (current tip CID)
+ * @param options - Optional settings (deletedByPi, note, skipSync)
+ * @returns Response with deletion details
+ */
+export async function deleteEntityKG(
+  ipfs: IPFSService,
+  tipSvc: TipService,
+  backendURL: string,
+  entityId: string,
+  expectTip: string,
+  options?: {
+    deletedByPi?: string;
+    note?: string;
+    skipSync?: boolean;
+  }
+): Promise<DeleteEntityResponse> {
+  // ==========================================================================
+  // STEP 1: VALIDATE - Entity must exist and be active
+  // ==========================================================================
+  const currentTip = await tipSvc.readEntityTip(entityId);
+  if (!currentTip) {
+    throw new NotFoundError('Entity', entityId);
+  }
+
+  // CAS check
+  if (currentTip !== expectTip) {
+    throw new CASError({ actual: currentTip, expect: expectTip });
+  }
+
+  const currentManifest = (await ipfs.dagGet(currentTip)) as EntityManifestV1 | EntityMergedV1 | EntityDeletedV1;
+
+  // Check if already deleted
+  if (currentManifest.schema === 'arke/entity-deleted@v1') {
+    throw new ValidationError(
+      `Entity ${entityId} is already deleted`,
+      { entityId, schema: currentManifest.schema }
+    );
+  }
+
+  // Check if merged (can't delete a merged entity - unmerge first or delete the target)
+  if (currentManifest.schema === 'arke/entity-merged@v1') {
+    const merged = currentManifest as EntityMergedV1;
+    throw new ValidationError(
+      `Entity ${entityId} is merged into ${merged.merged_into}. Unmerge first or delete the target entity.`,
+      { entityId, mergedInto: merged.merged_into }
+    );
+  }
+
+  const activeManifest = currentManifest as EntityManifestV1;
+
+  console.log(`[ENTITY-KG] Deleting entity ${entityId} (label: ${activeManifest.label})`);
+
+  // ==========================================================================
+  // STEP 2: BUILD TOMBSTONE MANIFEST
+  // ==========================================================================
+  const now = new Date().toISOString();
+
+  const deletedManifest: EntityDeletedV1 = {
+    schema: 'arke/entity-deleted@v1',
+    entity_id: entityId,
+    ver: activeManifest.ver + 1,
+    ts: now,
+    prev: link(currentTip), // Preserves history
+    ...(options?.deletedByPi && { deleted_by_pi: options.deletedByPi }),
+    ...(options?.note && { note: options.note }),
+  };
+
+  // ==========================================================================
+  // STEP 3: WRITE ATOMICALLY
+  // ==========================================================================
+  const deletedCid = await ipfs.dagPut(deletedManifest);
+  await tipSvc.writeEntityTipAtomic(entityId, deletedCid, currentTip);
+
+  console.log(`[ENTITY-KG] Deleted entity ${entityId} (v${deletedManifest.ver})`);
+
+  // ==========================================================================
+  // STEP 4: APPEND EVENT
+  // ==========================================================================
+  try {
+    const eventCid = await appendEvent(backendURL, {
+      type: 'update',
+      pi: entityId,
+      ver: deletedManifest.ver,
+      tip_cid: deletedCid,
+    });
+    console.log(`[EVENT] Appended delete event for entity ${entityId}: ${eventCid}`);
+  } catch (error) {
+    console.error(`[EVENT] Failed to append delete event for entity ${entityId}:`, error);
+  }
+
+  return {
+    entity_id: entityId,
+    deleted_ver: deletedManifest.ver,
+    deleted_manifest_cid: deletedCid,
+    previous_ver: activeManifest.ver,
+    previous_manifest_cid: currentTip,
+  };
 }

@@ -11,11 +11,15 @@ import {
   getEntitiesKGLightweight,
   appendEntityVersion,
   mergeEntityKG,
+  unmergeEntityKG,
+  deleteEntityKG,
 } from '../services/entity-kg-ops';
 import {
   CreateEntityKGRequestSchema,
   AppendEntityVersionRequestSchema,
   MergeEntityRequestSchema,
+  UnmergeEntityRequestSchema,
+  DeleteEntityRequestSchema,
 } from '../types/entity-manifest';
 import { Network, validatePiMatchesNetwork } from '../types/network';
 import { HonoEnv } from '../types/hono';
@@ -209,4 +213,100 @@ export async function batchGetLightweightHandler(c: Context): Promise<Response> 
   const entities = await getEntitiesKGLightweight(ipfs, tipSvc, body.entity_ids);
 
   return c.json({ entities });
+}
+
+/**
+ * POST /entities-kg/:entity_id/unmerge
+ * Restore a merged entity back to active state
+ */
+export async function unmergeEntityKGHandler(c: Context<HonoEnv>): Promise<Response> {
+  const ipfs: IPFSService = c.get('ipfs');
+  const tipSvc: TipService = c.get('tipService');
+  const network: Network = c.get('network');
+  const backendURL = getBackendURL(c.env);
+  const entityId = c.req.param('entity_id');
+
+  // Validate entity_id matches the requested network
+  validatePiMatchesNetwork(entityId, network);
+
+  // Validate request body
+  const body = await validateBody(c.req.raw, UnmergeEntityRequestSchema);
+
+  // Unmerge entity
+  const response = await unmergeEntityKG(
+    ipfs,
+    tipSvc,
+    backendURL,
+    entityId,
+    body.expect_tip,
+    {
+      restoreFromVer: body.restore_from_ver,
+      note: body.note,
+      skipSync: body.skip_sync,
+    }
+  );
+
+  // Fire-and-forget sync ONLY if skip_sync is not set
+  if (!body.skip_sync) {
+    c.executionCtx.waitUntil(
+      syncEntity(c.env, {
+        entity_id: entityId,
+        network,
+        event: 'unmerged',
+        was_merged_into: response.was_merged_into,
+      })
+    );
+  }
+
+  return c.json(response, 201);
+}
+
+/**
+ * POST /entities-kg/:entity_id/delete
+ * Delete an entity (creates tombstone, preserves history)
+ */
+export async function deleteEntityKGHandler(c: Context<HonoEnv>): Promise<Response> {
+  const ipfs: IPFSService = c.get('ipfs');
+  const tipSvc: TipService = c.get('tipService');
+  const network: Network = c.get('network');
+  const backendURL = getBackendURL(c.env);
+  const entityId = c.req.param('entity_id');
+
+  // Validate entity_id matches the requested network
+  validatePiMatchesNetwork(entityId, network);
+
+  // Validate request body
+  const body = await validateBody(c.req.raw, DeleteEntityRequestSchema);
+
+  // Validate deleted_by_pi if provided
+  if (body.deleted_by_pi) {
+    validatePiMatchesNetwork(body.deleted_by_pi, network);
+  }
+
+  // Delete entity
+  const response = await deleteEntityKG(
+    ipfs,
+    tipSvc,
+    backendURL,
+    entityId,
+    body.expect_tip,
+    {
+      deletedByPi: body.deleted_by_pi,
+      note: body.note,
+      skipSync: body.skip_sync,
+    }
+  );
+
+  // Fire-and-forget sync ONLY if skip_sync is not set
+  if (!body.skip_sync) {
+    c.executionCtx.waitUntil(
+      syncEntity(c.env, {
+        entity_id: entityId,
+        network,
+        event: 'deleted',
+      })
+    );
+  }
+
+  return c.json(response, 201);
 }

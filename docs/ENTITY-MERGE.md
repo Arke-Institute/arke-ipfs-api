@@ -1,6 +1,6 @@
-# Entity Merge Documentation
+# Entity Merge & Unmerge Documentation
 
-This document describes how entity merging works in the Arke IPFS API service, including the atomic merge protocol, component merging rules, and race condition handling.
+This document describes how entity merging and unmerging works in the Arke IPFS API service, including the atomic merge protocol, component merging rules, race condition handling, and restore operations.
 
 ## Table of Contents
 
@@ -371,34 +371,94 @@ Follows redirects and returns canonical entity:
 
 ## Unmerging
 
-While there's no direct "unmerge" operation, you can restore a merged entity:
+The unmerge API restores a merged entity back to active state.
 
-### Method 1: Create New Version from History
+### Endpoint
 
-```typescript
-// 1. Get the merged entity
-const merged = await getEntity(mergedEntityId);
-
-// 2. Get the previous (real) version
-const prevCid = merged.prev_cid;
-const prevManifest = await ipfs.dagGet(prevCid);
-
-// 3. Create a new version restoring the entity
-await appendEntityVersion(mergedEntityId, {
-  expect_tip: merged.manifest_cid,
-  type: prevManifest.type,
-  label: prevManifest.label,
-  // ... restore other fields
-  note: "Unmerged - restored from history"
-});
+```http
+POST /entities-kg/{entity_id}/unmerge
+Content-Type: application/json
+X-Arke-Network: test
 ```
 
-### Method 2: Manual Restoration
+### Request
 
-The admin can manually:
-1. Read the `prev` chain to find last real version
-2. Create a new `arke/entity@v1` manifest with restored data
-3. Write to entity tip
+```json
+{
+  "expect_tip": "bafyrei...",     // CAS guard - current tip of merged entity
+  "restore_from_ver": 3,          // Optional: restore from specific version
+  "note": "Wrongful merge"        // Optional: reason for unmerge
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `expect_tip` | Yes | CAS guard - must match current merged entity tip |
+| `restore_from_ver` | No | Version to restore from. Default: prev (last real version) |
+| `note` | No | Reason for unmerge |
+| `skip_sync` | No | Skip index-sync callback (internal use) |
+
+### Success Response (201)
+
+```json
+{
+  "entity_id": "IIENTITY...",
+  "restored_from_ver": 3,
+  "new_ver": 5,
+  "new_manifest_cid": "bafyrei...",
+  "was_merged_into": "IIENTITY_TARGET..."
+}
+```
+
+### Error Responses
+
+**400 - Not Merged:**
+```json
+{
+  "error": "VALIDATION_ERROR",
+  "message": "Entity is not merged (schema: arke/entity@v1)"
+}
+```
+
+**409 - CAS Failure:**
+```json
+{
+  "error": "CAS_FAILURE",
+  "message": "Expected tip bafyrei... but found bafyrei..."
+}
+```
+
+**404 - Version Not Found:**
+```json
+{
+  "error": "NOT_FOUND",
+  "message": "Version 3 not found in entity history"
+}
+```
+
+### What Unmerge Does
+
+1. **Validates** entity is currently merged (has `arke/entity-merged@v1` schema)
+2. **Finds restore point** - uses `prev` link or walks chain for specific version
+3. **Creates new version** with restored data (type, label, components, relationships)
+4. **Does NOT modify target** - target keeps all merged components
+
+### What Gets Restored
+
+| Component | Behavior |
+|-----------|----------|
+| Type, Label, Description | ✅ Restored from prev manifest |
+| Properties | ✅ Restored (CID reference) |
+| Relationships | ✅ Restored (CID reference) |
+| File components | ✅ Restored (CID references) |
+| source_pis | ✅ Restored |
+
+### What Happens to Target
+
+The target entity (that absorbed the source during merge) is **not modified**:
+- Target keeps the merged components
+- Target keeps the relationships that were transferred
+- This may result in relationships existing on both entities (acceptable)
 
 ### History Preservation
 
@@ -408,6 +468,31 @@ v4 (restored entity)
  └─prev─→ v3 (merge redirect)
            └─prev─→ v2 (last real version)
                      └─prev─→ v1
+```
+
+### Client Retry Pattern
+
+```typescript
+async function unmergeWithRetry(entityId: string, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    const entity = await getEntity(entityId);
+
+    // Verify entity is merged
+    if (entity.status !== 'merged') {
+      throw new Error('Entity is not merged');
+    }
+
+    try {
+      return await unmergeEntity(entityId, entity.prev_cid);
+    } catch (e) {
+      if (e.status === 409 && e.error === 'CAS_FAILURE') {
+        // Entity was modified, retry with fresh tip
+        continue;
+      }
+      throw e;
+    }
+  }
+}
 ```
 
 ---
@@ -481,17 +566,19 @@ async function mergeWithRetry(sourceId, targetId, maxRetries = 3) {
 
 | File | Description |
 |------|-------------|
-| `src/services/entity-kg-ops.ts` | Core merge logic |
-| `src/types/entity-manifest.ts` | Merge request/response types |
-| `src/handlers/entities-kg.ts` | HTTP handler |
+| `src/services/entity-kg-ops.ts` | Core merge/unmerge logic |
+| `src/types/entity-manifest.ts` | Merge/unmerge request/response types |
+| `src/handlers/entities-kg.ts` | HTTP handlers |
 
 ### Functions
 
 | Function | Description |
 |----------|-------------|
 | `mergeEntityKG()` | Main merge operation |
+| `unmergeEntityKG()` | Main unmerge operation |
 | `mergeComponents()` | Component merge logic |
 | `resolveEntityChain()` | Follow redirect chain |
+| `findVersionInHistory()` | Walk prev chain to find version |
 
 ### Tests
 
@@ -501,3 +588,4 @@ async function mergeWithRetry(sourceId, targetId, maxRetries = 3) {
 | `tests/entities-kg/merge-race-test.ts` | Mutual merge race tests |
 | `tests/entities-kg/chain-race-test.ts` | Chain formation tests |
 | `tests/entities-kg/retry-merge-test.ts` | Retry mechanism tests |
+| `tests/entities-kg/unmerge-test.ts` | Unmerge functionality tests |

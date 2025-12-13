@@ -29,6 +29,8 @@ import {
   getEntityKGHandler,
   appendEntityVersionHandler,
   mergeEntityKGHandler,
+  unmergeEntityKGHandler,
+  deleteEntityKGHandler,
   batchGetLightweightHandler,
 } from './handlers/entities-kg';
 
@@ -141,6 +143,12 @@ app.post('/entities-kg/:entity_id/versions', appendEntityVersionHandler);
 
 // POST /entities-kg/:entity_id/merge - Merge into another entity
 app.post('/entities-kg/:entity_id/merge', mergeEntityKGHandler);
+
+// POST /entities-kg/:entity_id/unmerge - Restore merged entity
+app.post('/entities-kg/:entity_id/unmerge', unmergeEntityKGHandler);
+
+// POST /entities-kg/:entity_id/delete - Delete entity (creates tombstone)
+app.post('/entities-kg/:entity_id/delete', deleteEntityKGHandler);
 
 // ===========================================================================
 

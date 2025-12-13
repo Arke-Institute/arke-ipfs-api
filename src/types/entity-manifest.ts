@@ -226,3 +226,73 @@ export interface GetEntityMergedResponse {
   merged_at: string;
   prev_cid: string; // Can follow to see history
 }
+
+// Unmerge request - restores a merged entity
+export const UnmergeEntityRequestSchema = z.object({
+  expect_tip: z.string().min(1), // CAS guard for merged entity
+  restore_from_ver: z.number().int().positive().optional(), // Optional: specific version to restore from
+  note: z.string().optional(),
+  skip_sync: z.boolean().optional(), // Skip index-sync callback (for internal use)
+});
+
+export type UnmergeEntityRequest = z.infer<typeof UnmergeEntityRequestSchema>;
+
+// Success response - entity restored
+export interface UnmergeEntityResponse {
+  entity_id: string;
+  restored_from_ver: number;
+  new_ver: number;
+  new_manifest_cid: string;
+  was_merged_into: string;
+}
+
+// =============================================================================
+// Delete Entity Types
+// =============================================================================
+
+// Deleted entity manifest (tombstone - preserves version history)
+export const EntityDeletedV1Schema = z.object({
+  schema: z.literal('arke/entity-deleted@v1'),
+
+  // Identity (preserved from original)
+  entity_id: EntityIdSchema,
+
+  // Version chain (continues from original - preserves history!)
+  ver: z.number().int().positive(),
+  ts: z.string().datetime(),
+  prev: IPLDLinkSchema, // Links to last real version (not nullable - must have history)
+
+  // Audit info
+  deleted_by_pi: EntityIdSchema.optional(), // PI that performed deletion
+  note: z.string().optional(),
+});
+
+export type EntityDeletedV1 = z.infer<typeof EntityDeletedV1Schema>;
+
+// Delete request
+export const DeleteEntityRequestSchema = z.object({
+  expect_tip: z.string().min(1), // CAS guard for entity
+  deleted_by_pi: EntityIdSchema.optional(), // Optional: PI performing deletion
+  note: z.string().optional(),
+  skip_sync: z.boolean().optional(), // Skip index-sync callback (for internal use)
+});
+
+export type DeleteEntityRequest = z.infer<typeof DeleteEntityRequestSchema>;
+
+// Success response - entity deleted
+export interface DeleteEntityResponse {
+  entity_id: string;
+  deleted_ver: number;
+  deleted_manifest_cid: string;
+  previous_ver: number;
+  previous_manifest_cid: string;
+}
+
+// Deleted entity response (when fetching a deleted entity)
+export interface GetEntityDeletedResponse {
+  status: 'deleted';
+  entity_id: string;
+  deleted_at: string;
+  deleted_ver: number;
+  prev_cid: string; // Can follow to see history
+}

@@ -8,14 +8,15 @@
 import { Env } from '../types/env';
 import { Network } from '../types/network';
 
-type EntitySyncEvent = 'created' | 'updated' | 'merged';
+type EntitySyncEvent = 'created' | 'updated' | 'merged' | 'unmerged' | 'deleted';
 type PISyncEvent = 'created' | 'updated';
 
 interface EntitySyncRequest {
   entity_id: string;
   network: Network;
   event: EntitySyncEvent;
-  merged_into?: string;
+  merged_into?: string;      // For 'merged' event
+  was_merged_into?: string;  // For 'unmerged' event
 }
 
 interface PISyncRequest {
