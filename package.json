@@ -12,7 +12,8 @@
     "test:race:stress": "RUN_STRESS=true tsx tests/race-conditions/race-test-suite.ts",
     "test:entities-kg": "tsx tests/entities-kg/entities-kg-test-suite.ts",
     "test:merge-race": "tsx tests/entities-kg/merge-race-test.ts",
-    "test:chain-race": "tsx tests/entities-kg/chain-race-test.ts"
+    "test:chain-race": "tsx tests/entities-kg/chain-race-test.ts",
+    "test:retry-merge": "tsx tests/entities-kg/retry-merge-test.ts"
   },
   "dependencies": {
     "hono": "^4.6.11",
