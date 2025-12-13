@@ -21,6 +21,7 @@ import {
   GetEntityResponse,
 } from '../types/manifest';
 import { Network, validatePiMatchesNetwork } from '../types/network';
+import { checkEditPermission } from '../lib/permissions';
 
 // Maximum number of children that can be added/removed in a single request
 const MAX_CHILDREN_PER_REQUEST = 100;
@@ -44,6 +45,17 @@ export async function appendVersionHandler(c: Context): Promise<Response> {
 
   // Validate PI matches the requested network
   validatePiMatchesNetwork(pi, network);
+
+  // Permission check - verify user can edit this entity
+  const userId = c.req.header('X-User-Id') || null;
+  const permCheck = await checkEditPermission(c.env, userId, pi);
+
+  if (!permCheck.allowed) {
+    return c.json({
+      error: 'FORBIDDEN',
+      message: permCheck.reason || 'Not authorized to edit this entity',
+    }, 403);
+  }
 
   // Parse body ONCE (can't re-read request body stream)
   const body = await validateBody(c.req.raw, AppendVersionRequestSchema);

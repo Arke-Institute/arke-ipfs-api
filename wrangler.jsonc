@@ -15,8 +15,15 @@
     }
   ],
 
+  // Service bindings for internal worker communication
+  "services": [
+    {
+      "binding": "COLLECTIONS_WORKER",
+      "service": "arke-collections-worker"
+    }
+  ],
+
   "observability": {
     "enabled": true
   }
- 
 }

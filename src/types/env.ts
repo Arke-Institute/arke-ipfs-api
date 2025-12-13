@@ -17,6 +17,12 @@ export interface Env {
   IPFS_SERVER_API_URL: string;
 
   /**
+   * Service binding to collections worker for permission checks.
+   * Used to verify users can edit entities before allowing modifications.
+   */
+  COLLECTIONS_WORKER: Fetcher;
+
+  /**
    * Arke origin block PI (well-known ULID)
    * Default: 00000000000000000000000000
    * Set with: wrangler secret put ARKE_PI (or use default)
