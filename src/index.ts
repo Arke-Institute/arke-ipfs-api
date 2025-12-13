@@ -23,6 +23,13 @@ import {
 import { updateRelationsHandler } from './handlers/relations';
 import { resolveHandler } from './handlers/resolve';
 import { downloadHandler } from './handlers/download';
+import {
+  createEntityKGHandler,
+  getEntityKGHandler,
+  appendEntityVersionHandler,
+  mergeEntityKGHandler,
+  batchGetLightweightHandler,
+} from './handlers/entities-kg';
 
 // Define context variables type
 type Variables = {
@@ -121,6 +128,27 @@ app.post('/relations', updateRelationsHandler);
 
 // GET /resolve/:pi
 app.get('/resolve/:pi', resolveHandler);
+
+// ===========================================================================
+// Knowledge Graph Entity Routes (/entities-kg)
+// ===========================================================================
+
+// POST /entities-kg/batch/lightweight - Batch fetch lightweight entities (must come before /:entity_id)
+app.post('/entities-kg/batch/lightweight', batchGetLightweightHandler);
+
+// POST /entities-kg - Create entity
+app.post('/entities-kg', createEntityKGHandler);
+
+// GET /entities-kg/:entity_id - Get entity
+app.get('/entities-kg/:entity_id', getEntityKGHandler);
+
+// POST /entities-kg/:entity_id/versions - Append version
+app.post('/entities-kg/:entity_id/versions', appendEntityVersionHandler);
+
+// POST /entities-kg/:entity_id/merge - Merge into another entity
+app.post('/entities-kg/:entity_id/merge', mergeEntityKGHandler);
+
+// ===========================================================================
 
 // POST /arke/init - Initialize Arke origin block if it doesn't exist
 // Note: Arke origin block always uses main network (ARKE_PI starts with '00', not 'II')

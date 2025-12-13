@@ -9,7 +9,8 @@
     "test": "vitest",
     "type-check": "tsc --noEmit",
     "test:race": "tsx tests/race-conditions/race-test-suite.ts",
-    "test:race:stress": "RUN_STRESS=true tsx tests/race-conditions/race-test-suite.ts"
+    "test:race:stress": "RUN_STRESS=true tsx tests/race-conditions/race-test-suite.ts",
+    "test:entities-kg": "tsx tests/entities-kg/entities-kg-test-suite.ts"
   },
   "dependencies": {
     "hono": "^4.6.11",

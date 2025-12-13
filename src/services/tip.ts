@@ -8,18 +8,26 @@ import { Network } from '../types/network';
  * Tip file management in MFS
  *
  * Tips are stored at network-specific paths:
+ *
+ * PIs:
  * - Main: /arke/index/<shard2[0]>/<shard2[1]>/<PI>.tip
  * - Test: /arke/test/index/<shard2[0]>/<shard2[1]>/<PI>.tip
+ *
+ * Entities (Knowledge Graph):
+ * - Main: /arke/entities/<shard2[0]>/<shard2[1]>/<entity_id>.tip
+ * - Test: /arke/test/entities/<shard2[0]>/<shard2[1]>/<entity_id>.tip
  *
  * Each .tip file contains a single line: <manifest_cid>\n
  */
 export class TipService {
   private readonly baseDir: string;
+  private readonly entityBaseDir: string;
   private readonly network: Network;
 
   constructor(private ipfs: IPFSService, network: Network = 'main') {
     this.network = network;
     this.baseDir = network === 'test' ? '/arke/test/index' : '/arke/index';
+    this.entityBaseDir = network === 'test' ? '/arke/test/entities' : '/arke/entities';
   }
 
   /**
@@ -288,5 +296,118 @@ export class TipService {
       entities,
       next_cursor: null,
     };
+  }
+
+  // ===========================================================================
+  // Entity (Knowledge Graph) Methods
+  // ===========================================================================
+
+  /**
+   * Build MFS path for entity's .tip file
+   * Example: "01J8ME3H..." -> "/arke/entities/01/J8/01J8ME3H....tip"
+   */
+  entityTipPath(entityId: string): string {
+    const [a, b] = shard2(entityId);
+    return `${this.entityBaseDir}/${a}/${b}/${entityId}.tip`;
+  }
+
+  /**
+   * Build directory path for entity
+   */
+  private entityTipDir(entityId: string): string {
+    const [a, b] = shard2(entityId);
+    return `${this.entityBaseDir}/${a}/${b}`;
+  }
+
+  /**
+   * Read tip CID for entity
+   * Returns null if entity doesn't exist (unlike readTip which throws)
+   */
+  async readEntityTip(entityId: string): Promise<string | null> {
+    const path = this.entityTipPath(entityId);
+    try {
+      const content = await this.ipfs.mfsRead(path);
+      return content.trim();
+    } catch (error) {
+      // Entity doesn't exist
+      return null;
+    }
+  }
+
+  /**
+   * Write tip CID for entity
+   * Creates parent directories if needed
+   */
+  async writeEntityTip(entityId: string, cid: string): Promise<void> {
+    const dir = this.entityTipDir(entityId);
+    const path = this.entityTipPath(entityId);
+
+    try {
+      // Ensure parent directories exist
+      const dirExists = await this.ipfs.mfsExists(dir);
+      if (!dirExists) {
+        await this.ipfs.mfsMkdir(dir, true);
+      }
+
+      // Write tip file (create or overwrite)
+      await this.ipfs.mfsWrite(path, `${cid}\n`, {
+        create: true,
+        truncate: true,
+      });
+    } catch (error) {
+      throw new IPFSError(`Failed to write entity tip for ${entityId}: ${error}`);
+    }
+  }
+
+  /**
+   * Write entity tip with atomic CAS verification
+   * Throws TipWriteRaceError if another writer won the race
+   */
+  async writeEntityTipAtomic(entityId: string, newCid: string, expectCid: string): Promise<void> {
+    const dir = this.entityTipDir(entityId);
+    const path = this.entityTipPath(entityId);
+
+    try {
+      // Ensure parent directories exist
+      const dirExists = await this.ipfs.mfsExists(dir);
+      if (!dirExists) {
+        await this.ipfs.mfsMkdir(dir, true);
+      }
+
+      // Re-verify tip hasn't changed (CRITICAL CAS CHECK)
+      const actualTip = await this.readEntityTip(entityId);
+      if (actualTip !== expectCid) {
+        throw new TipWriteRaceError(entityId, expectCid, actualTip || '(not found)');
+      }
+
+      // Write tip file (create or overwrite)
+      await this.ipfs.mfsWrite(path, `${newCid}\n`, {
+        create: true,
+        truncate: true,
+      });
+
+      // POST-WRITE VERIFICATION (detect race condition)
+      const verifyTip = await this.readEntityTip(entityId);
+      if (verifyTip !== newCid) {
+        // Someone else wrote after us - throw to trigger retry
+        console.warn(`[TIP] Race detected for entity ${entityId}: wrote ${newCid}, but tip is now ${verifyTip}`);
+        throw new TipWriteRaceError(entityId, newCid, verifyTip || '(not found)');
+      }
+
+      console.log(`[TIP] Atomic entity write verified for ${entityId}: ${expectCid} → ${newCid}`);
+    } catch (error) {
+      if (error instanceof TipWriteRaceError) {
+        throw error; // Let retry handler catch this
+      }
+      throw new IPFSError(`Failed to write entity tip for ${entityId}: ${error}`);
+    }
+  }
+
+  /**
+   * Check if entity tip exists
+   */
+  async entityTipExists(entityId: string): Promise<boolean> {
+    const path = this.entityTipPath(entityId);
+    return await this.ipfs.mfsExists(path);
   }
 }
