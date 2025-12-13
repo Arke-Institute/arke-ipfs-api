@@ -16,8 +16,81 @@ import {
   toLightweight,
 } from '../types/entity-manifest';
 import { RelationshipsComponent } from '../types/relationships';
-import { ConflictError, NotFoundError, CASError } from '../utils/errors';
+import { ConflictError, NotFoundError, CASError, ValidationError } from '../utils/errors';
 import { generatePi } from '../utils/ulid';
+
+// Maximum number of redirect hops to follow before failing
+const MAX_CHAIN_HOPS = 10;
+
+/**
+ * Result of resolving an entity through its redirect chain
+ */
+interface ResolvedEntity {
+  entityId: string;
+  tipCid: string;
+  manifest: EntityManifestV1;
+  hops: number;
+}
+
+/**
+ * Follow redirect chain to find the final active entity.
+ * Detects cycles and enforces max hop limit.
+ *
+ * @throws ValidationError if cycle detected or chain too long
+ * @throws NotFoundError if entity in chain not found
+ */
+export async function resolveEntityChain(
+  ipfs: IPFSService,
+  tipSvc: TipService,
+  startEntityId: string
+): Promise<ResolvedEntity> {
+  const seen = new Set<string>();
+  let currentId = startEntityId;
+  let hops = 0;
+
+  while (true) {
+    // Cycle detection
+    if (seen.has(currentId)) {
+      const chain = [...seen, currentId].join(' → ');
+      throw new ValidationError(
+        `Cycle detected in entity redirect chain: ${chain}`,
+        { cycle: [...seen], repeated: currentId }
+      );
+    }
+    seen.add(currentId);
+
+    // Max hops check
+    if (hops > MAX_CHAIN_HOPS) {
+      throw new ValidationError(
+        `Entity redirect chain too long (>${MAX_CHAIN_HOPS} hops)`,
+        { start: startEntityId, hops, lastSeen: currentId }
+      );
+    }
+
+    // Read entity
+    const tipCid = await tipSvc.readEntityTip(currentId);
+    if (!tipCid) {
+      throw new NotFoundError('Entity', currentId);
+    }
+
+    const manifest = (await ipfs.dagGet(tipCid)) as EntityManifestV1 | EntityMergedV1;
+
+    // If not merged, we found the active entity
+    if (manifest.schema !== 'arke/entity-merged@v1') {
+      return {
+        entityId: currentId,
+        tipCid,
+        manifest: manifest as EntityManifestV1,
+        hops,
+      };
+    }
+
+    // Follow redirect
+    const merged = manifest as EntityMergedV1;
+    currentId = merged.merged_into;
+    hops++;
+  }
+}
 
 /**
  * Create a new entity in the knowledge graph
@@ -140,27 +213,16 @@ export async function getEntityKG(
 }
 
 /**
- * Get lightweight entity for context loading
+ * Get lightweight entity for context loading.
+ * Follows redirect chain with cycle detection and max hop limit.
  */
 export async function getEntityKGLightweight(
   ipfs: IPFSService,
   tipSvc: TipService,
   entityId: string
 ): Promise<LightweightEntity> {
-  const tipCid = await tipSvc.readEntityTip(entityId);
-  if (!tipCid) {
-    throw new NotFoundError('Entity', entityId);
-  }
-
-  const manifest = (await ipfs.dagGet(tipCid)) as EntityManifestV1 | EntityMergedV1;
-
-  // If merged, follow the redirect
-  if (manifest.schema === 'arke/entity-merged@v1') {
-    const merged = manifest as EntityMergedV1;
-    return getEntityKGLightweight(ipfs, tipSvc, merged.merged_into);
-  }
-
-  return toLightweight(manifest as EntityManifestV1);
+  const resolved = await resolveEntityChain(ipfs, tipSvc, entityId);
+  return toLightweight(resolved.manifest);
 }
 
 /**
