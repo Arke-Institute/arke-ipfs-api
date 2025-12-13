@@ -33,8 +33,9 @@ The system uses a dual-layer approach combining IPFS immutable content with MFS 
 
 1. **MFS Layer** (`/arke/index/` directory)
    - Stores `.tip` files that point to the latest manifest CID for each entity
-   - Sharded directory structure: `/arke/index/{PI[0:2]}/{PI[2:4]}/{PI}.tip`
-   - Example: PI `01K75HQQXNTDG7...` → `/arke/index/01/K7/01K75HQQXNTDG7....tip`
+   - Sharded directory structure: `/arke/index/{PI[-4:-2]}/{PI[-2:]}/{PI}.tip`
+   - Uses last 4 chars of ULID (random portion) for uniform distribution
+   - Example: PI `01K75HQQXNTDG7BBP7PS9AWYAN` → `/arke/index/AW/YA/01K75HQQXNTDG7BBP7PS9AWYAN.tip`
    - Enables fast PI → latest CID lookups without traversing version history
 
 2. **IPFS Layer** (immutable content)
@@ -268,13 +269,13 @@ await POST('/relations', {
 ### Sharding Algorithm
 
 ```typescript
-function shard2(pi: string): [string, string] {
-  return [pi.slice(0, 2), pi.slice(2, 4)];
+function shard2(ulid: string): [string, string] {
+  return [ulid.slice(-4, -2), ulid.slice(-2)];
 }
-// "01K75HQQX..." → ["01", "K7"]
+// "01K75HQQXNTDG7BBP7PS9AWYAN" → ["AW", "YA"]
 ```
 
-This distributes entities across directories for better MFS performance.
+Uses last 4 characters of ULID (from the 16-char random portion) for uniform distribution across 32^4 = 1,048,576 possible shard combinations. The first 10 chars of ULID are timestamp-based and change very slowly, so using them would cluster all data in the same few directories.
 
 ## Testing & Type Safety
 

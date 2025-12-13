@@ -19,6 +19,7 @@ import {
 import { RelationshipsComponent } from '../types/relationships';
 import { ConflictError, NotFoundError, CASError, ValidationError } from '../utils/errors';
 import { generatePi } from '../utils/ulid';
+import { appendEvent } from '../clients/ipfs-server';
 
 // Maximum number of redirect hops to follow before failing
 const MAX_CHAIN_HOPS = 10;
@@ -99,6 +100,7 @@ export async function resolveEntityChain(
 export async function createEntityKG(
   ipfs: IPFSService,
   tipSvc: TipService,
+  backendURL: string,
   req: CreateEntityKGRequest,
   network: Network = 'main'
 ): Promise<CreateEntityKGResponse> {
@@ -157,6 +159,19 @@ export async function createEntityKG(
   await tipSvc.writeEntityTip(entityId, manifestCid);
 
   console.log(`[ENTITY-KG] Created entity ${entityId} (type: ${req.type}, label: ${req.label})`);
+
+  // Append create event to event stream (non-blocking, don't fail if this fails)
+  try {
+    const eventCid = await appendEvent(backendURL, {
+      type: 'create',
+      pi: entityId, // Entity IDs go in the same event stream as PIs
+      ver: 1,
+      tip_cid: manifestCid,
+    });
+    console.log(`[EVENT] Appended create event for entity ${entityId}: ${eventCid}`);
+  } catch (error) {
+    console.error(`[EVENT] Failed to append create event for entity ${entityId}:`, error);
+  }
 
   return {
     entity_id: entityId,
@@ -252,6 +267,7 @@ export async function getEntitiesKGLightweight(
 export async function appendEntityVersion(
   ipfs: IPFSService,
   tipSvc: TipService,
+  backendURL: string,
   entityId: string,
   req: AppendEntityVersionRequest
 ): Promise<AppendEntityVersionResponse> {
@@ -342,6 +358,19 @@ export async function appendEntityVersion(
 
   console.log(`[ENTITY-KG] Updated entity ${entityId} to v${newManifest.ver}`);
 
+  // Append update event to event stream (non-blocking, don't fail if this fails)
+  try {
+    const eventCid = await appendEvent(backendURL, {
+      type: 'update',
+      pi: entityId,
+      ver: newManifest.ver,
+      tip_cid: manifestCid,
+    });
+    console.log(`[EVENT] Appended update event for entity ${entityId}: ${eventCid}`);
+  } catch (error) {
+    console.error(`[EVENT] Failed to append update event for entity ${entityId}:`, error);
+  }
+
   return {
     entity_id: entityId,
     ver: newManifest.ver,
@@ -369,6 +398,7 @@ const MAX_TARGET_UPDATE_RETRIES = 5;
 export async function mergeEntityKG(
   ipfs: IPFSService,
   tipSvc: TipService,
+  backendURL: string,
   sourceEntityId: string,
   targetEntityId: string,
   expectTip: string,
@@ -507,6 +537,25 @@ export async function mergeEntityKG(
 
         console.log(`[ENTITY-KG] Cycle resolved: ${sourceEntityId} → ${finalTargetId} wins`);
 
+        // Emit events for both source (merge redirect) and target (absorbed)
+        try {
+          await appendEvent(backendURL, {
+            type: 'update',
+            pi: sourceEntityId,
+            ver: mergedManifest.ver,
+            tip_cid: sourceMergedCid,
+          });
+          await appendEvent(backendURL, {
+            type: 'update',
+            pi: finalTargetId,
+            ver: restoredTarget.ver,
+            tip_cid: restoredCid,
+          });
+          console.log(`[EVENT] Appended merge events for ${sourceEntityId} → ${finalTargetId}`);
+        } catch (error) {
+          console.error(`[EVENT] Failed to append merge events:`, error);
+        }
+
         return {
           source_entity_id: sourceEntityId,
           merged_into: finalTargetId,
@@ -616,6 +665,25 @@ export async function mergeEntityKG(
       await tipSvc.writeEntityTipAtomic(finalTargetId, updatedCid, latestTargetTip);
 
       console.log(`[ENTITY-KG] Merged entity ${sourceEntityId} into ${finalTargetId}`);
+
+      // Emit events for both source (merge redirect) and target (absorbed)
+      try {
+        await appendEvent(backendURL, {
+          type: 'update',
+          pi: sourceEntityId,
+          ver: mergedManifest.ver,
+          tip_cid: sourceMergedCid,
+        });
+        await appendEvent(backendURL, {
+          type: 'update',
+          pi: finalTargetId,
+          ver: updatedTargetManifest.ver,
+          tip_cid: updatedCid,
+        });
+        console.log(`[EVENT] Appended merge events for ${sourceEntityId} → ${finalTargetId}`);
+      } catch (error) {
+        console.error(`[EVENT] Failed to append merge events:`, error);
+      }
 
       return {
         source_entity_id: sourceEntityId,

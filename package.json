@@ -13,7 +13,10 @@
     "test:entities-kg": "tsx tests/entities-kg/entities-kg-test-suite.ts",
     "test:merge-race": "tsx tests/entities-kg/merge-race-test.ts",
     "test:chain-race": "tsx tests/entities-kg/chain-race-test.ts",
-    "test:retry-merge": "tsx tests/entities-kg/retry-merge-test.ts"
+    "test:retry-merge": "tsx tests/entities-kg/retry-merge-test.ts",
+    "migrate:sharding": "tsx scripts/migrate-sharding.ts",
+    "migrate:sharding:dry": "tsx scripts/migrate-sharding.ts",
+    "migrate:sharding:run": "tsx scripts/migrate-sharding.ts --execute"
   },
   "dependencies": {
     "hono": "^4.6.11",

@@ -81,11 +81,34 @@ export function assertValidUlid(value: string, label: string = 'ULID'): void {
 
 /**
  * Extract shard prefix for MFS path organization
- * Returns [first2chars, next2chars] for sharding
- * Example: "01J8ME3H6FZ3KQ5W1P2XY8K7E5" -> ["01", "J8"]
- * Example: "IIAK75HQQXNTDG7BBP7PS9AWY" -> ["II", "AK"]
+ * Uses LAST 4 characters (from the random portion) for even distribution.
+ *
+ * ULID structure: TTTTTTTTTTRRRRRRRRRRRRRRRR
+ *                 |---------|---------------|
+ *                 timestamp  randomness
+ *                 (10 chars) (16 chars)
+ *
+ * Using first 4 chars (old approach) was problematic because:
+ * - Char 0-1 change every ~278 years (essentially constant)
+ * - Char 2-3 change every ~99 days
+ * - Result: all data in same few directories
+ *
+ * Using last 4 chars (new approach):
+ * - Fully random, uniform distribution
+ * - 32^4 = 1,048,576 possible shard combinations
+ *
+ * Example: "01J8ME3H6FZ3KQ5W1P2XY8K7E5" -> ["K7", "E5"]
+ * Example: "IIAK75HQQXNTDG7BBP7PS9AWY" -> ["AW", "Y"]  (note: test IDs are 25 chars)
  */
 export function shard2(ulid: string): [string, string] {
+  return [ulid.slice(-4, -2), ulid.slice(-2)];
+}
+
+/**
+ * OLD sharding function - used for migration only
+ * DO NOT USE for new code
+ */
+export function shard2Old(ulid: string): [string, string] {
   return [ulid.slice(0, 2), ulid.slice(2, 4)];
 }
 

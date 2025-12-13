@@ -2,6 +2,7 @@ import { Context } from 'hono';
 import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
 import { validateBody } from '../utils/validation';
+import { getBackendURL } from '../config';
 import {
   createEntityKG,
   getEntityKG,
@@ -25,6 +26,7 @@ export async function createEntityKGHandler(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
+  const backendURL = getBackendURL(c.env);
 
   // Validate request body
   const body = await validateBody(c.req.raw, CreateEntityKGRequestSchema);
@@ -41,7 +43,7 @@ export async function createEntityKGHandler(c: Context): Promise<Response> {
   }
 
   // Create entity
-  const response = await createEntityKG(ipfs, tipSvc, body, network);
+  const response = await createEntityKG(ipfs, tipSvc, backendURL, body, network);
 
   return c.json(response, 201);
 }
@@ -79,6 +81,7 @@ export async function appendEntityVersionHandler(c: Context): Promise<Response> 
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
+  const backendURL = getBackendURL(c.env);
   const entityId = c.req.param('entity_id');
 
   // Validate entity_id matches the requested network
@@ -100,7 +103,7 @@ export async function appendEntityVersionHandler(c: Context): Promise<Response> 
   }
 
   // Append version
-  const response = await appendEntityVersion(ipfs, tipSvc, entityId, body);
+  const response = await appendEntityVersion(ipfs, tipSvc, backendURL, entityId, body);
 
   return c.json(response, 201);
 }
@@ -113,6 +116,7 @@ export async function mergeEntityKGHandler(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
+  const backendURL = getBackendURL(c.env);
   const entityId = c.req.param('entity_id');
 
   // Validate entity_id matches the requested network
@@ -128,6 +132,7 @@ export async function mergeEntityKGHandler(c: Context): Promise<Response> {
   const response = await mergeEntityKG(
     ipfs,
     tipSvc,
+    backendURL,
     entityId,
     body.merge_into,
     body.expect_tip,

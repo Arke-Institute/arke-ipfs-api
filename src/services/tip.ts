@@ -9,25 +9,24 @@ import { Network } from '../types/network';
  *
  * Tips are stored at network-specific paths:
  *
- * PIs:
- * - Main: /arke/index/<shard2[0]>/<shard2[1]>/<PI>.tip
- * - Test: /arke/test/index/<shard2[0]>/<shard2[1]>/<PI>.tip
+ * All identifiers (PIs and Entities) share the same index:
+ * - Main: /arke/index/<shard2[0]>/<shard2[1]>/<id>.tip
+ * - Test: /arke/test/index/<shard2[0]>/<shard2[1]>/<id>.tip
  *
- * Entities (Knowledge Graph):
- * - Main: /arke/entities/<shard2[0]>/<shard2[1]>/<entity_id>.tip
- * - Test: /arke/test/entities/<shard2[0]>/<shard2[1]>/<entity_id>.tip
+ * This unified approach ensures:
+ * - All identifiers are tracked by the event/snapshot system
+ * - Single sharding implementation
+ * - Simpler DR (everything in one place)
  *
  * Each .tip file contains a single line: <manifest_cid>\n
  */
 export class TipService {
   private readonly baseDir: string;
-  private readonly entityBaseDir: string;
   private readonly network: Network;
 
   constructor(private ipfs: IPFSService, network: Network = 'main') {
     this.network = network;
     this.baseDir = network === 'test' ? '/arke/test/index' : '/arke/index';
-    this.entityBaseDir = network === 'test' ? '/arke/test/entities' : '/arke/entities';
   }
 
   /**
@@ -39,7 +38,8 @@ export class TipService {
 
   /**
    * Build MFS path for PI's .tip file
-   * Example: "01J8ME3H..." -> "/arke/index/01/J8/01J8ME3H....tip"
+   * Uses last 4 chars for sharding (random portion of ULID)
+   * Example: "01J8ME3H6FZ3KQ5W1P2XY8K7E5" -> "/arke/index/K7/E5/01J8ME3H6FZ3KQ5W1P2XY8K7E5.tip"
    */
   tipPath(pi: string): string {
     const [a, b] = shard2(pi);
@@ -300,15 +300,19 @@ export class TipService {
 
   // ===========================================================================
   // Entity (Knowledge Graph) Methods
+  //
+  // Note: Entities now use the same /arke/index/ directory as PIs.
+  // This ensures they are tracked by the event/snapshot system.
   // ===========================================================================
 
   /**
    * Build MFS path for entity's .tip file
-   * Example: "01J8ME3H..." -> "/arke/entities/01/J8/01J8ME3H....tip"
+   * Uses last 4 chars for sharding (random portion of ULID)
+   * Example: "01J8ME3H6FZ3KQ5W1P2XY8K7E5" -> "/arke/index/K7/E5/01J8ME3H6FZ3KQ5W1P2XY8K7E5.tip"
    */
   entityTipPath(entityId: string): string {
     const [a, b] = shard2(entityId);
-    return `${this.entityBaseDir}/${a}/${b}/${entityId}.tip`;
+    return `${this.baseDir}/${a}/${b}/${entityId}.tip`;
   }
 
   /**
@@ -316,7 +320,7 @@ export class TipService {
    */
   private entityTipDir(entityId: string): string {
     const [a, b] = shard2(entityId);
-    return `${this.entityBaseDir}/${a}/${b}`;
+    return `${this.baseDir}/${a}/${b}`;
   }
 
   /**
