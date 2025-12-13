@@ -20,6 +20,10 @@
     {
       "binding": "COLLECTIONS_WORKER",
       "service": "arke-collections-worker"
+    },
+    {
+      "binding": "INDEX_SYNC",
+      "service": "index-sync"
     }
   ],
 

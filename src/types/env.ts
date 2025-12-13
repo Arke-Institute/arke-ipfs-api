@@ -23,6 +23,12 @@ export interface Env {
   COLLECTIONS_WORKER: Fetcher;
 
   /**
+   * Service binding to index-sync worker for real-time index updates.
+   * Fire-and-forget sync calls after IPFS writes.
+   */
+  INDEX_SYNC: Fetcher;
+
+  /**
    * Arke origin block PI (well-known ULID)
    * Default: 00000000000000000000000000
    * Set with: wrangler secret put ARKE_PI (or use default)

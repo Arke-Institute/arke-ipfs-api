@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from './types/env';
+import type { HonoEnv } from './types/hono';
 import { validateEnv, getIPFSURL, getBackendURL, getArkePI } from './config';
 import { IPFSService } from './services/ipfs';
 import { TipService } from './services/tip';
@@ -31,14 +32,7 @@ import {
   batchGetLightweightHandler,
 } from './handlers/entities-kg';
 
-// Define context variables type
-type Variables = {
-  ipfs: IPFSService;
-  tipService: TipService;
-  network: Network;
-};
-
-const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+const app = new Hono<HonoEnv>();
 
 // CORS middleware (optional, configure as needed)
 app.use('/*', cors());

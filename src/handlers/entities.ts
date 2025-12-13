@@ -1,6 +1,7 @@
 import { Context } from 'hono';
 import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
+import { syncPI } from '../services/sync';
 import { validateBody } from '../utils/validation';
 import { getBackendURL } from '../config';
 import { listEventsFromBackend } from '../clients/ipfs-server';
@@ -10,12 +11,13 @@ import {
   CreateEntityRequestSchema,
 } from '../types/manifest';
 import { Network, validatePiMatchesNetwork } from '../types/network';
+import { HonoEnv } from '../types/hono';
 
 /**
  * POST /entities
  * Create new entity with v1 manifest
  */
-export async function createEntityHandler(c: Context): Promise<Response> {
+export async function createEntityHandler(c: Context<HonoEnv>): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
@@ -26,6 +28,15 @@ export async function createEntityHandler(c: Context): Promise<Response> {
 
   // Call service layer (network validation happens inside createEntity)
   const response = await createEntity(ipfs, tipSvc, backendURL, body, network);
+
+  // Fire-and-forget sync to index-sync service
+  c.executionCtx.waitUntil(
+    syncPI(c.env, {
+      pi: response.pi,
+      network,
+      event: 'created',
+    })
+  );
 
   return c.json(response, 201);
 }

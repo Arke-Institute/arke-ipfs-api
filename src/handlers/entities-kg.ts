@@ -1,6 +1,7 @@
 import { Context } from 'hono';
 import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
+import { syncEntity } from '../services/sync';
 import { validateBody } from '../utils/validation';
 import { getBackendURL } from '../config';
 import {
@@ -17,12 +18,13 @@ import {
   MergeEntityRequestSchema,
 } from '../types/entity-manifest';
 import { Network, validatePiMatchesNetwork } from '../types/network';
+import { HonoEnv } from '../types/hono';
 
 /**
  * POST /entities-kg
  * Create new entity in knowledge graph
  */
-export async function createEntityKGHandler(c: Context): Promise<Response> {
+export async function createEntityKGHandler(c: Context<HonoEnv>): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
@@ -44,6 +46,15 @@ export async function createEntityKGHandler(c: Context): Promise<Response> {
 
   // Create entity
   const response = await createEntityKG(ipfs, tipSvc, backendURL, body, network);
+
+  // Fire-and-forget sync to index-sync service
+  c.executionCtx.waitUntil(
+    syncEntity(c.env, {
+      entity_id: response.entity_id,
+      network,
+      event: 'created',
+    })
+  );
 
   return c.json(response, 201);
 }
@@ -77,7 +88,7 @@ export async function getEntityKGHandler(c: Context): Promise<Response> {
  * POST /entities-kg/:entity_id/versions
  * Append new version to entity
  */
-export async function appendEntityVersionHandler(c: Context): Promise<Response> {
+export async function appendEntityVersionHandler(c: Context<HonoEnv>): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
@@ -105,6 +116,15 @@ export async function appendEntityVersionHandler(c: Context): Promise<Response> 
   // Append version
   const response = await appendEntityVersion(ipfs, tipSvc, backendURL, entityId, body);
 
+  // Fire-and-forget sync to index-sync service
+  c.executionCtx.waitUntil(
+    syncEntity(c.env, {
+      entity_id: entityId,
+      network,
+      event: 'updated',
+    })
+  );
+
   return c.json(response, 201);
 }
 
@@ -112,7 +132,7 @@ export async function appendEntityVersionHandler(c: Context): Promise<Response> 
  * POST /entities-kg/:entity_id/merge
  * Merge this entity into another entity
  */
-export async function mergeEntityKGHandler(c: Context): Promise<Response> {
+export async function mergeEntityKGHandler(c: Context<HonoEnv>): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
@@ -142,6 +162,19 @@ export async function mergeEntityKGHandler(c: Context): Promise<Response> {
   // Check if this is a conflict response (caller lost tiebreaker)
   if ('conflict' in response && response.conflict) {
     return c.json(response, 409);
+  }
+
+  // Fire-and-forget sync ONLY if skip_sync is not set
+  // This prevents circular callbacks when index-sync triggers merges
+  if (!body.skip_sync) {
+    c.executionCtx.waitUntil(
+      syncEntity(c.env, {
+        entity_id: entityId,
+        network,
+        event: 'merged',
+        merged_into: body.merge_into,
+      })
+    );
   }
 
   return c.json(response, 201);

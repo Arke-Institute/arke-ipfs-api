@@ -1,6 +1,7 @@
 import { Context } from 'hono';
 import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
+import { syncPI } from '../services/sync';
 import { CASError, ValidationError, TipWriteRaceError } from '../utils/errors';
 import { validateCIDRecord } from '../utils/cid';
 import {
@@ -21,6 +22,7 @@ import {
   GetEntityResponse,
 } from '../types/manifest';
 import { Network, validatePiMatchesNetwork } from '../types/network';
+import { HonoEnv } from '../types/hono';
 import { checkEditPermission } from '../lib/permissions';
 
 // Maximum number of children that can be added/removed in a single request
@@ -35,7 +37,7 @@ const BATCH_SIZE = 2;
  * POST /entities/:pi/versions
  * Append new version (CAS-protected with automatic retry on race conditions)
  */
-export async function appendVersionHandler(c: Context): Promise<Response> {
+export async function appendVersionHandler(c: Context<HonoEnv>): Promise<Response> {
   const MAX_CAS_RETRIES = 3;
 
   const ipfs: IPFSService = c.get('ipfs');
@@ -74,9 +76,11 @@ export async function appendVersionHandler(c: Context): Promise<Response> {
     }
   }
 
+  let response: Response | undefined;
   for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
     try {
-      return await appendVersionAttempt(ipfs, tipSvc, pi, body, c.env);
+      response = await appendVersionAttempt(ipfs, tipSvc, pi, body, c.env);
+      break;
     } catch (error) {
       if (error instanceof TipWriteRaceError && attempt < MAX_CAS_RETRIES - 1) {
         // Exponential backoff: 50ms, 100ms, 200ms
@@ -89,11 +93,24 @@ export async function appendVersionHandler(c: Context): Promise<Response> {
     }
   }
 
-  // Should never reach here, but TypeScript needs this
-  throw new CASError({
-    actual: 'unknown',
-    expect: 'unknown',
-  });
+  if (!response) {
+    // Should never reach here, but TypeScript needs this
+    throw new CASError({
+      actual: 'unknown',
+      expect: 'unknown',
+    });
+  }
+
+  // Fire-and-forget sync to index-sync service
+  c.executionCtx.waitUntil(
+    syncPI(c.env, {
+      pi,
+      network,
+      event: 'updated',
+    })
+  );
+
+  return response;
 }
 
 /**
