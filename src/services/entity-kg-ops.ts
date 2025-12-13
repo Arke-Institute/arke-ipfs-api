@@ -10,6 +10,7 @@ import {
   GetEntityKGResponse,
   GetEntityMergedResponse,
   MergeEntityResponse,
+  MergeConflictResponse,
   AppendEntityVersionRequest,
   AppendEntityVersionResponse,
   LightweightEntity,
@@ -349,8 +350,17 @@ export async function appendEntityVersion(
   };
 }
 
+// Maximum retries for target update CAS failures
+const MAX_TARGET_UPDATE_RETRIES = 5;
+
 /**
  * Merge entity A into entity B (creates redirect version of A)
+ *
+ * Uses lock-then-check pattern to handle race conditions:
+ * 1. Lock source by writing redirect
+ * 2. Check if target became a redirect to us (cycle detection)
+ * 3. If cycle: apply tiebreaker (smaller source ID wins)
+ * 4. If no cycle: update target with source_pis
  *
  * This creates a redirect version of the source entity pointing to the target.
  * The source entity's history is preserved via the prev link.
@@ -363,8 +373,10 @@ export async function mergeEntityKG(
   targetEntityId: string,
   expectTip: string,
   note?: string
-): Promise<MergeEntityResponse> {
-  // 1. Verify source exists and tip matches
+): Promise<MergeEntityResponse | MergeConflictResponse> {
+  // ==========================================================================
+  // STEP 1: VALIDATE SOURCE
+  // ==========================================================================
   const sourceTip = await tipSvc.readEntityTip(sourceEntityId);
   if (!sourceTip) {
     throw new NotFoundError('Entity', sourceEntityId);
@@ -373,7 +385,6 @@ export async function mergeEntityKG(
     throw new CASError({ actual: sourceTip, expect: expectTip });
   }
 
-  // 2. Get source manifest to get version number and source_pis
   const sourceManifest = (await ipfs.dagGet(sourceTip)) as EntityManifestV1 | EntityMergedV1;
 
   // Can't merge an already-merged entity
@@ -383,59 +394,230 @@ export async function mergeEntityKG(
 
   const source = sourceManifest as EntityManifestV1;
 
-  // 3. Verify target exists
-  const targetTip = await tipSvc.readEntityTip(targetEntityId);
-  if (!targetTip) {
-    throw new NotFoundError('Entity', targetEntityId);
+  // ==========================================================================
+  // STEP 2: VALIDATE TARGET (follow chain if already merged)
+  // ==========================================================================
+  let finalTargetId = targetEntityId;
+  let resolved: ResolvedEntity;
+
+  try {
+    resolved = await resolveEntityChain(ipfs, tipSvc, targetEntityId);
+    finalTargetId = resolved.entityId;
+  } catch (e) {
+    if (e instanceof NotFoundError) {
+      throw new NotFoundError('Entity', targetEntityId);
+    }
+    throw e;
   }
 
-  const targetManifest = (await ipfs.dagGet(targetTip)) as EntityManifestV1 | EntityMergedV1;
-
-  // Can't merge into a merged entity
-  if (targetManifest.schema === 'arke/entity-merged@v1') {
-    throw new ConflictError('Entity', `Target ${targetEntityId} has been merged`);
+  // If target chain leads back to source, that's already a problem
+  if (finalTargetId === sourceEntityId) {
+    throw new ConflictError('Entity', `Cannot merge ${sourceEntityId} into itself`);
   }
 
-  const target = targetManifest as EntityManifestV1;
-  const now = new Date().toISOString();
+  const target = resolved.manifest;
+  const initialTargetTip = resolved.tipCid;
 
-  // 4. Create merged (redirect) version of source
+  // ==========================================================================
+  // STEP 3: LOCK SOURCE (create redirect)
+  // ==========================================================================
+  const mergeTs = new Date().toISOString();
   const mergedManifest: EntityMergedV1 = {
     schema: 'arke/entity-merged@v1',
     entity_id: sourceEntityId,
     ver: source.ver + 1,
-    ts: now,
-    prev: link(sourceTip), // Preserves full history!
-    merged_into: targetEntityId,
+    ts: mergeTs,
+    prev: link(sourceTip),
+    merged_into: finalTargetId, // Always point to final active entity
     note: note || `Merged into ${target.label}`,
   };
 
   const sourceMergedCid = await ipfs.dagPut(mergedManifest);
   await tipSvc.writeEntityTipAtomic(sourceEntityId, sourceMergedCid, sourceTip);
 
-  // 5. Update target with source's source_pis
-  const combinedSourcePis = [...new Set([...target.source_pis, ...source.source_pis])];
+  console.log(`[ENTITY-KG] Locked source ${sourceEntityId} → ${finalTargetId}`);
 
-  const updatedTargetManifest: EntityManifestV1 = {
-    ...target,
-    ver: target.ver + 1,
-    ts: now,
-    prev: link(targetTip),
-    source_pis: combinedSourcePis,
-    note: `Absorbed entity ${source.label}`,
-  };
+  // ==========================================================================
+  // STEP 4: CHECK FOR CYCLE (re-read target after locking source)
+  // ==========================================================================
+  const currentTargetTip = await tipSvc.readEntityTip(finalTargetId);
+  if (!currentTargetTip) {
+    // Target was deleted? Shouldn't happen, but restore source and error
+    throw new ConflictError('Entity', `Target ${finalTargetId} disappeared during merge`);
+  }
 
-  const targetUpdatedCid = await ipfs.dagPut(updatedTargetManifest);
-  await tipSvc.writeEntityTipAtomic(targetEntityId, targetUpdatedCid, targetTip);
+  const currentTargetManifest = (await ipfs.dagGet(currentTargetTip)) as EntityManifestV1 | EntityMergedV1;
 
-  console.log(`[ENTITY-KG] Merged entity ${sourceEntityId} into ${targetEntityId}`);
+  if (currentTargetManifest.schema === 'arke/entity-merged@v1') {
+    const targetMerged = currentTargetManifest as EntityMergedV1;
 
-  return {
-    source_entity_id: sourceEntityId,
-    merged_into: targetEntityId,
-    source_new_ver: mergedManifest.ver,
-    source_manifest_cid: sourceMergedCid,
-    target_new_ver: updatedTargetManifest.ver,
-    target_manifest_cid: targetUpdatedCid,
-  };
+    if (targetMerged.merged_into === sourceEntityId) {
+      // =======================================================================
+      // CYCLE DETECTED! Both entities merged into each other.
+      // Apply tiebreaker: smaller source ID wins
+      // =======================================================================
+      console.log(`[ENTITY-KG] CYCLE DETECTED: ${sourceEntityId} ↔ ${finalTargetId}`);
+
+      if (sourceEntityId < finalTargetId) {
+        // =====================================================================
+        // WE WIN - restore target from its prev, then update it
+        // =====================================================================
+        console.log(`[ENTITY-KG] Tiebreaker: ${sourceEntityId} < ${finalTargetId}, we win`);
+
+        const originalTargetCid = targetMerged.prev['/'];
+        const originalTarget = (await ipfs.dagGet(originalTargetCid)) as EntityManifestV1;
+
+        // Combine source_pis from both entities
+        const combinedSourcePis = [...new Set([...originalTarget.source_pis, ...source.source_pis])];
+
+        const restoredTarget: EntityManifestV1 = {
+          ...originalTarget,
+          ver: originalTarget.ver + 2, // +1 for failed merge, +1 for restore
+          ts: new Date().toISOString(),
+          prev: link(currentTargetTip),
+          source_pis: combinedSourcePis,
+          note: `Restored after merge conflict; absorbed ${source.label}`,
+        };
+
+        const restoredCid = await ipfs.dagPut(restoredTarget);
+
+        try {
+          await tipSvc.writeEntityTipAtomic(finalTargetId, restoredCid, currentTargetTip);
+        } catch (e) {
+          // If CAS fails, the other worker might have already handled it
+          // Re-check target state
+          const retryTip = await tipSvc.readEntityTip(finalTargetId);
+          const retryManifest = (await ipfs.dagGet(retryTip!)) as EntityManifestV1 | EntityMergedV1;
+          if (retryManifest.schema === 'arke/entity-merged@v1') {
+            // Still merged - retry restore
+            throw e;
+          }
+          // Target is now active - use its current state
+          console.log(`[ENTITY-KG] Target already restored by other worker`);
+          return {
+            source_entity_id: sourceEntityId,
+            merged_into: finalTargetId,
+            source_new_ver: mergedManifest.ver,
+            source_manifest_cid: sourceMergedCid,
+            target_new_ver: (retryManifest as EntityManifestV1).ver,
+            target_manifest_cid: retryTip!,
+            conflict_resolved: true,
+          };
+        }
+
+        console.log(`[ENTITY-KG] Cycle resolved: ${sourceEntityId} → ${finalTargetId} wins`);
+
+        return {
+          source_entity_id: sourceEntityId,
+          merged_into: finalTargetId,
+          source_new_ver: mergedManifest.ver,
+          source_manifest_cid: sourceMergedCid,
+          target_new_ver: restoredTarget.ver,
+          target_manifest_cid: restoredCid,
+          conflict_resolved: true,
+        };
+
+      } else {
+        // =====================================================================
+        // WE LOSE - restore our source, return conflict
+        // =====================================================================
+        console.log(`[ENTITY-KG] Tiebreaker: ${sourceEntityId} > ${finalTargetId}, we lose`);
+
+        const restoredSource: EntityManifestV1 = {
+          ...source,
+          ver: source.ver + 2, // +1 for failed merge, +1 for restore
+          ts: new Date().toISOString(),
+          prev: link(sourceMergedCid),
+          note: `Restored after merge conflict (lost to ${finalTargetId})`,
+        };
+
+        const restoredCid = await ipfs.dagPut(restoredSource);
+
+        try {
+          await tipSvc.writeEntityTipAtomic(sourceEntityId, restoredCid, sourceMergedCid);
+          console.log(`[ENTITY-KG] Restored source ${sourceEntityId} after losing tiebreaker`);
+        } catch {
+          // CAS fail means winner may have already touched our entity (rare)
+          // Just return conflict - entity state will be correct
+          console.log(`[ENTITY-KG] Source restore CAS failed, winner likely handled it`);
+        }
+
+        return {
+          conflict: true,
+          message: `Merge conflict: ${finalTargetId}→${sourceEntityId} won (smaller source ID)`,
+          winner_source: finalTargetId,
+          winner_target: sourceEntityId,
+        };
+      }
+    }
+
+    // Target merged into something else (not us) - this is an error
+    // The caller should retry with the new target
+    throw new ConflictError(
+      'Entity',
+      `Target ${finalTargetId} was merged into ${targetMerged.merged_into} during operation`
+    );
+  }
+
+  // ==========================================================================
+  // STEP 5: NO CYCLE - Update target with source_pis (with retry)
+  // ==========================================================================
+  let attempts = 0;
+  while (attempts < MAX_TARGET_UPDATE_RETRIES) {
+    try {
+      const latestTargetTip = await tipSvc.readEntityTip(finalTargetId);
+      if (!latestTargetTip) {
+        throw new ConflictError('Entity', `Target ${finalTargetId} disappeared`);
+      }
+
+      const latestTarget = (await ipfs.dagGet(latestTargetTip)) as EntityManifestV1 | EntityMergedV1;
+
+      // Check again that target wasn't merged while we were retrying
+      if (latestTarget.schema === 'arke/entity-merged@v1') {
+        throw new ConflictError(
+          'Entity',
+          `Target ${finalTargetId} was merged during operation`
+        );
+      }
+
+      const targetEntity = latestTarget as EntityManifestV1;
+      const combinedSourcePis = [...new Set([...targetEntity.source_pis, ...source.source_pis])];
+
+      const updatedTargetManifest: EntityManifestV1 = {
+        ...targetEntity,
+        ver: targetEntity.ver + 1,
+        ts: new Date().toISOString(),
+        prev: link(latestTargetTip),
+        source_pis: combinedSourcePis,
+        note: `Absorbed entity ${source.label}`,
+      };
+
+      const updatedCid = await ipfs.dagPut(updatedTargetManifest);
+      await tipSvc.writeEntityTipAtomic(finalTargetId, updatedCid, latestTargetTip);
+
+      console.log(`[ENTITY-KG] Merged entity ${sourceEntityId} into ${finalTargetId}`);
+
+      return {
+        source_entity_id: sourceEntityId,
+        merged_into: finalTargetId,
+        source_new_ver: mergedManifest.ver,
+        source_manifest_cid: sourceMergedCid,
+        target_new_ver: updatedTargetManifest.ver,
+        target_manifest_cid: updatedCid,
+      };
+
+    } catch (e) {
+      // Retry on CAS failures for target update
+      if (e instanceof Error && e.message.includes('CAS')) {
+        attempts++;
+        const delay = 50 * Math.pow(2, attempts) + Math.random() * 50;
+        console.log(`[ENTITY-KG] Target update CAS retry ${attempts}/${MAX_TARGET_UPDATE_RETRIES}`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw e;
+    }
+  }
+
+  throw new ConflictError('Entity', `Max retries exceeded updating target ${finalTargetId}`);
 }

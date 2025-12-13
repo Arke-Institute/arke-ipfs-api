@@ -134,6 +134,11 @@ export async function mergeEntityKGHandler(c: Context): Promise<Response> {
     body.note
   );
 
+  // Check if this is a conflict response (caller lost tiebreaker)
+  if ('conflict' in response && response.conflict) {
+    return c.json(response, 409);
+  }
+
   return c.json(response, 201);
 }
 

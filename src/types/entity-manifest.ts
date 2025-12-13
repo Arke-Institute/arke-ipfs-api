@@ -168,6 +168,7 @@ export const MergeEntityRequestSchema = z.object({
 
 export type MergeEntityRequest = z.infer<typeof MergeEntityRequestSchema>;
 
+// Success response - merge completed
 export interface MergeEntityResponse {
   source_entity_id: string;
   merged_into: string;
@@ -175,6 +176,15 @@ export interface MergeEntityResponse {
   source_manifest_cid: string;
   target_new_ver: number; // Version of target (with updated source_pis)
   target_manifest_cid: string;
+  conflict_resolved?: boolean; // True if cycle was detected and we won tiebreaker
+}
+
+// Conflict response - caller lost tiebreaker in mutual merge race
+export interface MergeConflictResponse {
+  conflict: true;
+  message: string;
+  winner_source: string; // Entity that won (became redirect)
+  winner_target: string; // Entity that absorbed winner
 }
 
 // Get entity response
