@@ -25,6 +25,94 @@ import { appendEvent } from '../clients/ipfs-server';
 const MAX_CHAIN_HOPS = 10;
 
 /**
+ * Merge components from source entity into target entity.
+ *
+ * Rules:
+ * - Properties: Union with target winning on conflicts
+ * - Relationships: Concatenate arrays (source's rels appended to target's)
+ * - File components: Union with target winning on same filename
+ *
+ * @param ipfs - IPFS service for fetching/storing data
+ * @param source - Source entity manifest (being merged into target)
+ * @param target - Target entity manifest (absorbing source)
+ * @param note - Optional note for the merge
+ * @returns Merged components object
+ */
+async function mergeComponents(
+  ipfs: IPFSService,
+  source: EntityManifestV1,
+  target: EntityManifestV1,
+  note?: string
+): Promise<EntityManifestV1['components']> {
+  const now = new Date().toISOString();
+  const merged: EntityManifestV1['components'] = {};
+
+  // Get all unique component keys from both
+  const allKeys = new Set([
+    ...Object.keys(source.components),
+    ...Object.keys(target.components),
+  ]);
+
+  for (const key of allKeys) {
+    const sourceLink = source.components[key];
+    const targetLink = target.components[key];
+
+    if (key === 'properties') {
+      // Properties: Deep merge with target winning on conflicts
+      const sourceProps = sourceLink
+        ? await ipfs.dagGet(sourceLink['/']) as Record<string, unknown>
+        : null;
+      const targetProps = targetLink
+        ? await ipfs.dagGet(targetLink['/']) as Record<string, unknown>
+        : null;
+
+      if (sourceProps || targetProps) {
+        // Merge: source first, then target overwrites (target wins conflicts)
+        const mergedProps = {
+          ...(sourceProps || {}),
+          ...(targetProps || {}),
+        };
+        const propsCid = await ipfs.dagPut(mergedProps);
+        merged.properties = link(propsCid);
+      }
+    } else if (key === 'relationships') {
+      // Relationships: Concatenate arrays
+      const sourceRels = sourceLink
+        ? await ipfs.dagGet(sourceLink['/']) as RelationshipsComponent
+        : null;
+      const targetRels = targetLink
+        ? await ipfs.dagGet(targetLink['/']) as RelationshipsComponent
+        : null;
+
+      const combinedRels = [
+        ...(targetRels?.relationships || []),
+        ...(sourceRels?.relationships || []),
+      ];
+
+      if (combinedRels.length > 0) {
+        const relComponent: RelationshipsComponent = {
+          schema: 'arke/relationships@v1',
+          relationships: combinedRels,
+          timestamp: now,
+          note,
+        };
+        const relCid = await ipfs.dagPut(relComponent);
+        merged.relationships = link(relCid);
+      }
+    } else {
+      // File components: Target wins on conflict, otherwise take whatever exists
+      if (targetLink) {
+        merged[key] = targetLink;
+      } else if (sourceLink) {
+        merged[key] = sourceLink;
+      }
+    }
+  }
+
+  return merged;
+}
+
+/**
  * Result of resolving an entity through its redirect chain
  */
 interface ResolvedEntity {
@@ -135,6 +223,16 @@ export async function createEntityKG(
     components.relationships = link(relCid);
   }
 
+  // Store arbitrary file components if provided (description.md, pinax.json, etc.)
+  if (req.components) {
+    for (const [filename, cid] of Object.entries(req.components)) {
+      // Skip empty CIDs (used for removal in updates)
+      if (cid) {
+        components[filename] = link(cid);
+      }
+    }
+  }
+
   // Build manifest
   const manifest: EntityManifestV1 = {
     schema: 'arke/entity@v1',
@@ -210,6 +308,15 @@ export async function getEntityKG(
   }
 
   const entity = manifest as EntityManifestV1;
+
+  // Build components object with all component CIDs
+  const componentsResponse: Record<string, string | undefined> = {};
+  for (const [key, ipldLink] of Object.entries(entity.components)) {
+    if (ipldLink && typeof ipldLink === 'object' && '/' in ipldLink) {
+      componentsResponse[key] = ipldLink['/'];
+    }
+  }
+
   return {
     entity_id: entity.entity_id,
     ver: entity.ver,
@@ -219,10 +326,7 @@ export async function getEntityKG(
     type: entity.type,
     label: entity.label,
     description: entity.description,
-    components: {
-      properties: entity.components.properties?.['/'],
-      relationships: entity.components.relationships?.['/'],
-    },
+    components: componentsResponse,
     source_pis: entity.source_pis,
     note: entity.note,
   };
@@ -321,6 +425,19 @@ export async function appendEntityVersion(
     } else {
       // Empty array = remove relationships
       delete components.relationships;
+    }
+  }
+
+  // Update arbitrary file components if provided
+  if (req.components) {
+    for (const [filename, cid] of Object.entries(req.components)) {
+      if (cid) {
+        // Add or update component
+        components[filename] = link(cid);
+      } else {
+        // Empty string = remove component
+        delete components[filename];
+      }
     }
   }
 
@@ -500,11 +617,15 @@ export async function mergeEntityKG(
         // Combine source_pis from both entities
         const combinedSourcePis = [...new Set([...originalTarget.source_pis, ...source.source_pis])];
 
+        // Merge all components (properties, relationships, file components)
+        const mergedComponents = await mergeComponents(ipfs, source, originalTarget, note);
+
         const restoredTarget: EntityManifestV1 = {
           ...originalTarget,
           ver: originalTarget.ver + 2, // +1 for failed merge, +1 for restore
           ts: new Date().toISOString(),
           prev: link(currentTargetTip),
+          components: mergedComponents,
           source_pis: combinedSourcePis,
           note: `Restored after merge conflict; absorbed ${source.label}`,
         };
@@ -652,11 +773,15 @@ export async function mergeEntityKG(
       const targetEntity = latestTarget as EntityManifestV1;
       const combinedSourcePis = [...new Set([...targetEntity.source_pis, ...source.source_pis])];
 
+      // Merge all components (properties, relationships, file components)
+      const mergedComponents = await mergeComponents(ipfs, source, targetEntity, note);
+
       const updatedTargetManifest: EntityManifestV1 = {
         ...targetEntity,
         ver: targetEntity.ver + 1,
         ts: new Date().toISOString(),
         prev: link(latestTargetTip),
+        components: mergedComponents,
         source_pis: combinedSourcePis,
         note: `Absorbed entity ${source.label}`,
       };

@@ -301,3 +301,5 @@ See these files for complete specifications:
 - `SCHEMA.md` - Detailed schema definitions and validation rules
 - `QUICKSTART.md` - Quick start guide
 - `DEPLOYMENT.md` - Deployment instructions
+- `docs/ENTITY-SCHEMA.md` - Entity manifest schema documentation (types, components, versioning)
+- `docs/ENTITY-MERGE.md` - Entity merge behavior documentation (component merge rules, race handling)

@@ -33,10 +33,15 @@ export const EntityManifestV1Schema = z.object({
   description: z.string().optional(),
 
   // Components (CID references)
-  components: z.object({
-    properties: IPLDLinkSchema.optional(),
-    relationships: IPLDLinkSchema.optional(),
-  }),
+  // - properties: structured key-value data (stored as dag-json)
+  // - relationships: array of relationships (stored as dag-json)
+  // - [filename]: arbitrary file components (description.md, pinax.json, etc.)
+  components: z
+    .object({
+      properties: IPLDLinkSchema.optional(),
+      relationships: IPLDLinkSchema.optional(),
+    })
+    .catchall(IPLDLinkSchema), // Allow arbitrary file components
 
   // Source tracking (which PIs reference this entity)
   source_pis: z.array(EntityIdSchema),
@@ -114,6 +119,8 @@ export const CreateEntityKGRequestSchema = z.object({
       })
     )
     .optional(),
+  // Arbitrary file components: { 'description.md': 'cid...', 'pinax.json': 'cid...' }
+  components: z.record(z.string()).optional(),
   source_pis: z.array(EntityIdSchema).optional(), // Additional source PIs
   note: z.string().optional(),
 });
@@ -145,6 +152,9 @@ export const AppendEntityVersionRequestSchema = z.object({
       })
     )
     .optional(), // Replace all relationships
+  // Arbitrary file components to add/update: { 'description.md': 'cid...', 'pinax.json': 'cid...' }
+  // Set value to empty string to remove a component
+  components: z.record(z.string()).optional(),
   source_pis_add: z.array(EntityIdSchema).optional(),
   source_pis_remove: z.array(EntityIdSchema).optional(),
   note: z.string().optional(),
@@ -164,6 +174,7 @@ export const MergeEntityRequestSchema = z.object({
   expect_tip: z.string().min(1), // CAS guard for source entity
   merge_into: EntityIdSchema, // Target entity ID
   note: z.string().optional(),
+  skip_sync: z.boolean().optional(), // Skip index-sync callback (for internal merges)
 });
 
 export type MergeEntityRequest = z.infer<typeof MergeEntityRequestSchema>;
@@ -197,9 +208,11 @@ export interface GetEntityKGResponse {
   type: string;
   label: string;
   description?: string;
+  // Components: properties, relationships, plus arbitrary file components
   components: {
     properties?: string;
     relationships?: string;
+    [key: string]: string | undefined; // Arbitrary file components
   };
   source_pis: string[];
   note?: string;
