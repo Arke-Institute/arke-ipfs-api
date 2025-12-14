@@ -236,6 +236,78 @@ Manifests are stored as **dag-json** in IPFS:
 
 ---
 
+### Merged Tombstone (dag-json)
+
+Schema: **`arke/eidos-merged@v1`**
+
+When an entity is merged into another, a tombstone redirect manifest is created that preserves the version chain while redirecting to the target entity.
+
+```json
+{
+  "schema": "arke/eidos-merged@v1",
+  "id": "01SOURCE123...",
+  "type": "PI",
+  "ver": 3,
+  "ts": "2025-10-09T15:30:00Z",
+  "prev": { "/": "bafybeilast..." },
+  "merged_into": "01TARGET456...",
+  "note": "Merged - duplicate entry"
+}
+```
+
+**Field Specifications:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `schema` | string | ✅ | Always `"arke/eidos-merged@v1"` |
+| `id` | string | ✅ | Source entity ID (the one being merged) |
+| `type` | string | ✅ | Preserved entity type from source |
+| `ver` | number | ✅ | Version number (incremented from last active) |
+| `ts` | string | ✅ | Merge timestamp (ISO 8601) |
+| `prev` | IPLDLink | ✅ | Link to last active version (required - not nullable) |
+| `merged_into` | string | ✅ | Target entity ID (where data was merged into) |
+| `note` | string | ❌ | Optional merge reason/description |
+
+**Key Properties:**
+- Minimal tombstone with redirect (no components)
+- Version chain continues from source entity (`ver + 1`)
+- `prev` link required (points to last real version before merge)
+- Preserves entity type for context
+- API automatically follows redirect chains
+- Can be restored via unmerge operation
+- Target entity tracks merge via `merged_entities` array
+
+**Target Entity Tracking:**
+
+When entities with existing merge histories are merged together, the `merged_entities` arrays are concatenated:
+
+```typescript
+// Before merge:
+A.merged_entities = ["M1", "M2"]  // A previously absorbed M1 and M2
+B.merged_entities = ["M3", "M4"]  // B previously absorbed M3 and M4
+
+// After merging A into B:
+B.merged_entities = ["M3", "M4", "A", "M1", "M2"]  // Complete audit trail
+```
+
+This concatenation ensures full lineage tracking even through nested merges.
+
+**TypeScript Definition:**
+```typescript
+interface EidosMerged {
+  schema: 'arke/eidos-merged@v1';
+  id: string;
+  type: string;
+  ver: number;
+  ts: string;
+  prev: IPLDLink;
+  merged_into: string;
+  note?: string;
+}
+```
+
+---
+
 ### Deleted Tombstone (dag-json)
 
 Schema: **`arke/eidos-deleted@v1`**
