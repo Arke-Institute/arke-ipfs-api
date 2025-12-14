@@ -109,23 +109,28 @@ Reference to another IPFS object.
 
 ## Manifest Schema
 
-### ManifestV1 (IPLD dag-json)
+### EidosV1 (IPLD dag-json) - Current Schema
 
-The core data structure representing an entity version.
+The core data structure representing an entity version. This is the unified schema that replaced legacy `arke/manifest@v1` and `arke/entity@v1` schemas.
 
 #### TypeScript Definition
 
 ```typescript
-interface ManifestV1 {
-  schema: 'arke/manifest@v1';           // Schema version identifier
-  pi: string;                            // Entity PI (ULID)
+interface EidosV1 {
+  schema: 'arke/eidos@v1';              // Schema version identifier
+  id: string;                            // Entity identifier (ULID)
+  type: string;                          // Entity type (e.g., "PI", "Collection", "Document")
+  created_at: string;                    // ISO 8601 timestamp of version 1 (immutable)
   ver: number;                           // Version number (1, 2, 3, ...)
-  ts: string;                            // ISO 8601 timestamp
+  ts: string;                            // ISO 8601 timestamp of this version
   prev: IPLDLink | null;                 // Link to previous version (null for v1)
   components: {                          // Named CID references
     [label: string]: IPLDLink;
   };
-  children_pi?: string[];                // Optional: Child entity PIs
+  parent_pi?: string;                    // Optional: Parent entity ID
+  children_pi?: string[];                // Optional: Child entity IDs
+  label?: string;                        // Optional: Display name
+  description?: string;                  // Optional: Human-readable description
   note?: string;                         // Optional: Change description
 }
 
@@ -134,14 +139,52 @@ interface IPLDLink {
 }
 ```
 
+#### Legacy Schemas
+
+**ManifestV1** (deprecated, preserved in version history):
+```typescript
+interface ManifestV1 {
+  schema: 'arke/manifest@v1';
+  pi: string;
+  ver: number;
+  ts: string;
+  prev: IPLDLink | null;
+  components: { [label: string]: IPLDLink };
+  children_pi?: string[];
+  parent_pi?: string;
+  note?: string;
+}
+```
+
+**EntityV1** (deprecated, preserved in version history):
+```typescript
+interface EntityV1 {
+  schema: 'arke/entity@v1';
+  pi: string;
+  entity_type: string;
+  ver: number;
+  ts: string;
+  prev: IPLDLink | null;
+  components: { [label: string]: IPLDLink };
+  parent_pi?: string;
+  label?: string;
+  description?: string;
+  note?: string;
+}
+```
+
+**Migration Status:** All entities have been migrated to `arke/eidos@v1`. Legacy schemas exist only in historical versions.
+
 #### JSON Representation
 
 Before dag-json encoding, manifests are JSON:
 
 ```json
 {
-  "schema": "arke/manifest@v1",
-  "pi": "01K75HQQXNTDG7BBP7PS9AWYAN",
+  "schema": "arke/eidos@v1",
+  "id": "01K75HQQXNTDG7BBP7PS9AWYAN",
+  "type": "PI",
+  "created_at": "2025-10-09T22:30:00.000Z",
   "ver": 2,
   "ts": "2025-10-09T22:33:45.746Z",
   "prev": {
@@ -155,6 +198,8 @@ Before dag-json encoding, manifests are JSON:
   "children_pi": [
     "01K75HQQZKGZY0ZGEHFWJVY4H5"
   ],
+  "label": "WJC-NSCSW Collection",
+  "description": "World Jewish Congress collection from NARA",
   "note": "Added Blinken series to collection"
 }
 ```
@@ -163,14 +208,19 @@ Before dag-json encoding, manifests are JSON:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `schema` | string | ✅ | Always `"arke/manifest@v1"` |
-| `pi` | string | ✅ | Entity PI (26-char ULID) |
+| `schema` | string | ✅ | Always `"arke/eidos@v1"` |
+| `id` | string | ✅ | Entity identifier (26-char ULID) |
+| `type` | string | ✅ | Entity type (e.g., "PI", "Collection") |
+| `created_at` | string | ✅ | ISO 8601 timestamp of v1 (immutable) |
 | `ver` | number | ✅ | Version number, starts at 1 |
-| `ts` | string | ✅ | ISO 8601 timestamp (UTC) |
+| `ts` | string | ✅ | ISO 8601 timestamp of this version (UTC) |
 | `prev` | IPLDLink \| null | ✅ | Previous version CID, null for v1 |
 | `components` | object | ✅ | Map of label → CID, min 1 entry |
-| `children_pi` | string[] | ❌ | Array of child PIs (if parent) |
-| `note` | string | ❌ | Human-readable change note |
+| `parent_pi` | string | ❌ | Parent entity ID (for bidirectional nav) |
+| `children_pi` | string[] | ❌ | Array of child IDs (if parent) |
+| `label` | string | ❌ | Display name for UI |
+| `description` | string | ❌ | Human-readable description |
+| `note` | string | ❌ | Change note for this version |
 
 #### Storage Format
 
@@ -565,32 +615,47 @@ All tip files are stored in a sharded directory tree for scalability:
 
 ```
 /arke/index/
-  ├── 01/
-  │   ├── J8/
-  │   │   ├── 01J8ME3H6FZ3KQ5W1P2XY8K7E5.tip
-  │   │   └── 01J8NFQR2GZ8MP4X3N5YT9K2D7.tip
-  │   └── K7/
-  │       ├── 01K75GZSKKSP2K6TP05JBFNV09.tip
-  │       ├── 01K75HQQXNTDG7BBP7PS9AWYAN.tip
-  │       ├── 01K75HQQZKGZY0ZGEHFWJVY4H5.tip
-  │       └── 01K75HQR3AQH9R5SCTG5T2GT0S.tip
-  └── 02/
-      └── A3/
-          └── ...
+  ├── K7/
+  │   ├── E5/
+  │   │   └── 01J8ME3H6FZ3KQ5W1P2XY8K7E5.tip
+  │   └── D7/
+  │       └── 01J8NFQR2GZ8MP4X3N5YT9K2D7.tip
+  ├── AW/
+  │   └── YA/
+  │       ├── 01K75GZSKKSP2K6TP05AWYAN09.tip
+  │       └── 01K75HQQXNTDG7BBP7PS9AWYAN.tip
+  └── V4/
+      └── H5/
+          └── 01K75HQQZKGZY0ZGEHFWJVY4H5.tip
 ```
 
 **Sharding Algorithm:**
-- Extract first 2 characters of PI → Level 1 directory (e.g., `01`)
-- Extract characters 3-4 of PI → Level 2 directory (e.g., `K7`)
-- Filename: `{PI}.tip`
+- Extract characters [-4:-2] of ULID → Level 1 directory (e.g., `AW`)
+- Extract characters [-2:] of ULID → Level 2 directory (e.g., `YA`)
+- Filename: `{ULID}.tip`
+
+**Why Last 4 Chars:**
+ULIDs have this structure:
+```
+TTTTTTTTTTRRRRRRRRRRRRRRRR
+|---------|---------------|
+timestamp  randomness
+(10 chars) (16 chars)
+```
+
+The first 10 chars are timestamp-based and change very slowly (chars 0-1 change every ~278 years!). Using the last 4 chars from the random portion provides uniform distribution across 32^4 = 1,048,576 possible shard combinations.
 
 **Example:**
 ```
-PI: 01K75HQQXNTDG7BBP7PS9AWYAN
-    ││ └─ Shard 2
-    └───── Shard 1
-Path: /arke/index/01/K7/01K75HQQXNTDG7BBP7PS9AWYAN.tip
+ULID: 01K75HQQXNTDG7BBP7PS9AWYAN
+                          ││││
+                          │││└── Shard 2 (last 2)
+                          ││└────
+                          └────── Shard 1 (chars -4 to -2)
+Path: /arke/index/AW/YA/01K75HQQXNTDG7BBP7PS9AWYAN.tip
 ```
+
+**Migration Note:** The sharding algorithm was updated on 2025-12-13. All tip files have been migrated to the new path structure. See `scripts/migrations/migrate-sharding.ts` for details.
 
 ### Tip File Format
 
@@ -711,21 +776,32 @@ function isValidCID(cid: string): boolean {
 
 ## JSON Schema Definitions
 
-### ManifestV1 JSON Schema
+### EidosV1 JSON Schema
 
 ```json
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["schema", "pi", "ver", "ts", "prev", "components"],
+  "required": ["schema", "id", "type", "created_at", "ver", "ts", "prev", "components"],
   "properties": {
     "schema": {
       "type": "string",
-      "const": "arke/manifest@v1"
+      "const": "arke/eidos@v1"
     },
-    "pi": {
+    "id": {
       "type": "string",
-      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "Entity identifier (ULID)"
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Entity type (e.g., PI, Collection, Document)"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of version 1 (immutable)"
     },
     "ver": {
       "type": "integer",
@@ -733,7 +809,8 @@ function isValidCID(cid: string): boolean {
     },
     "ts": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of this version"
     },
     "prev": {
       "oneOf": [
@@ -758,17 +835,54 @@ function isValidCID(cid: string): boolean {
         }
       }
     },
+    "parent_pi": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "Parent entity ID for bidirectional navigation"
+    },
     "children_pi": {
       "type": "array",
       "items": {
         "type": "string",
         "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
       },
-      "uniqueItems": true
+      "uniqueItems": true,
+      "description": "Array of child entity IDs"
+    },
+    "label": {
+      "type": "string",
+      "description": "Display name for UI"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description"
     },
     "note": {
-      "type": "string"
+      "type": "string",
+      "description": "Change note for this version"
     }
+  }
+}
+```
+
+### Legacy Schema Definitions
+
+**ManifestV1 JSON Schema** (deprecated):
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["schema", "pi", "ver", "ts", "prev", "components"],
+  "properties": {
+    "schema": { "type": "string", "const": "arke/manifest@v1" },
+    "pi": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "ver": { "type": "integer", "minimum": 1 },
+    "ts": { "type": "string", "format": "date-time" },
+    "prev": { "oneOf": [{ "type": "null" }, { "type": "object", "required": ["/"], "properties": { "/": { "type": "string" }}}]},
+    "components": { "type": "object", "minProperties": 1 },
+    "children_pi": { "type": "array", "items": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" }},
+    "parent_pi": { "type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$" },
+    "note": { "type": "string" }
   }
 }
 ```
@@ -793,8 +907,10 @@ POST /entities
 **Stored Manifest (dag-json):**
 ```json
 {
-  "schema": "arke/manifest@v1",
-  "pi": "01K75HQQXNTDG7BBP7PS9AWYAN",
+  "schema": "arke/eidos@v1",
+  "id": "01K75HQQXNTDG7BBP7PS9AWYAN",
+  "type": "PI",
+  "created_at": "2025-10-09T22:33:45.724Z",
   "ver": 1,
   "ts": "2025-10-09T22:33:45.724Z",
   "prev": null,
@@ -806,10 +922,12 @@ POST /entities
 ```
 → Stored as CID: `bafyreidz6ouknvrb74...`
 
-**Tip File:** `/arke/index/01/K7/01K75HQQXNTDG7BBP7PS9AWYAN.tip`
+**Tip File:** `/arke/index/AW/YA/01K75HQQXNTDG7BBP7PS9AWYAN.tip`
 ```
 bafyreidz6ouknvrb74dytwp4bezjdh6fqxdsz4nynmp2xjvjw6ia6ijbse
 ```
+
+**Note:** Path uses last 4 chars of ULID for sharding: `...AWYAN` → `AW/YA/`
 
 ### 2. Update Relations (v2)
 
@@ -827,8 +945,10 @@ POST /relations
 **Stored Manifest (dag-json):**
 ```json
 {
-  "schema": "arke/manifest@v1",
-  "pi": "01K75HQQXNTDG7BBP7PS9AWYAN",
+  "schema": "arke/eidos@v1",
+  "id": "01K75HQQXNTDG7BBP7PS9AWYAN",
+  "type": "PI",
+  "created_at": "2025-10-09T22:33:45.724Z",
   "ver": 2,
   "ts": "2025-10-09T22:33:45.746Z",
   "prev": { "/": "bafyreidz6ouknvrb74..." },
