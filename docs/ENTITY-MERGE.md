@@ -585,10 +585,14 @@ async function mergeWithRetry(sourceId, targetId, maxRetries = 3) {
 
 ### Tests
 
-| File | Description |
-|------|-------------|
-| `tests/entities-kg/merge-components-test.ts` | Component merge tests (37) |
-| `tests/entities-kg/merge-race-test.ts` | Mutual merge race tests |
-| `tests/entities-kg/chain-race-test.ts` | Chain formation tests |
-| `tests/entities-kg/retry-merge-test.ts` | Retry mechanism tests |
-| `tests/entities-kg/unmerge-test.ts` | Unmerge functionality tests |
+**Current Tests (Eidos Schema):**
+- `tests/eidos/phase2-test-suite.ts` - Comprehensive merge/unmerge tests with component merge rules
+
+**Archived Tests (Legacy):**
+- `tests/archive/entities-kg/merge-components-test.ts` - Component merge tests (37) - Legacy
+- `tests/archive/entities-kg/merge-race-test.ts` - Mutual merge race tests - Legacy
+- `tests/archive/entities-kg/chain-race-test.ts` - Chain formation tests - Legacy
+- `tests/archive/entities-kg/retry-merge-test.ts` - Retry mechanism tests - Legacy
+- `tests/archive/entities-kg/unmerge-test.ts` - Unmerge functionality tests - Legacy
+
+See [`tests/README.md`](../tests/README.md) for current test documentation.
