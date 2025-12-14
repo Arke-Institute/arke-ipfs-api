@@ -84,9 +84,11 @@ export async function mergeEntities(
   const now = new Date().toISOString();
 
   // Add source to merged_entities tracking
+  // Include source's merged_entities to preserve full audit trail
   const updatedMergedEntities = [
     ...(target.merged_entities || []),
     sourceId,
+    ...(source.merged_entities || []),
   ];
 
   const updatedTarget: Eidos = {

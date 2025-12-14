@@ -184,16 +184,19 @@ Result: {
 }
 ```
 
-### Source PIs Merge
+### Merged Entities Tracking
 
-**Rule:** Union of arrays (deduplicated)
+**Rule:** Concatenate arrays with source ID in the middle (preserves full audit trail)
 
 ```
-A.source_pis: [PI_1, PI_2]
-B.source_pis: [PI_2, PI_3]
+A.merged_entities: [M1, M2]
+B.merged_entities: [M3, M4]
 
-Result: [PI_1, PI_2, PI_3]
+When merging A into B:
+Result: [M3, M4, A, M1, M2]
 ```
+
+This ensures all entities that have been absorbed into the canonical entity are tracked, even through nested merges.
 
 ---
 
