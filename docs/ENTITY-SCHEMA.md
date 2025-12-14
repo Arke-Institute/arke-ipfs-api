@@ -5,9 +5,10 @@ This document describes the entity manifest schema used by the Arke IPFS API ser
 ## Table of Contents
 
 - [Overview](#overview)
-- [Entity Manifest Schema](#entity-manifest-schema)
+- [Eidos Manifest Schema](#eidos-manifest-schema)
 - [Components](#components)
 - [Merged Entity Schema](#merged-entity-schema)
+- [Deleted Entity Schema](#deleted-entity-schema)
 - [Relationships Component](#relationships-component)
 - [Storage Structure](#storage-structure)
 - [Version Chain](#version-chain)
@@ -39,21 +40,24 @@ Entities use **ULIDs** (Universally Unique Lexicographically Sortable Identifier
 
 ---
 
-## Entity Manifest Schema
+## Eidos Manifest Schema
 
-**Schema ID:** `arke/entity@v1`
+**Schema ID:** `arke/eidos@v1`
+
+The unified Eidos schema is used for all entities (PIs, people, places, organizations, etc.).
 
 ```typescript
-interface EntityManifestV1 {
-  schema: 'arke/entity@v1';
+interface Eidos {
+  schema: 'arke/eidos@v1';
 
   // =========================================================================
   // IDENTITY (immutable after creation)
   // =========================================================================
 
-  entity_id: string;           // ULID - unique identifier, never changes
-  created_by_pi: string;       // ULID of the PI that first extracted this entity
-  created_at: string;          // ISO 8601 timestamp of creation
+  id: string;                  // ULID - unique identifier, never changes
+  type: string;                // Entity type: "PI", "person", "place", "organization", etc.
+  source_pi?: string;          // Optional: ULID of the PI that extracted this entity
+  created_at: string;          // ISO 8601 timestamp of v1 creation (immutable)
 
   // =========================================================================
   // VERSION CHAIN
@@ -64,11 +68,10 @@ interface EntityManifestV1 {
   prev: IPLDLink | null;       // IPLD link to previous version (null for v1)
 
   // =========================================================================
-  // CORE IDENTITY (lightweight summary)
+  // LIGHTWEIGHT FIELDS (for efficient context loading)
   // =========================================================================
 
-  type: string;                // Entity type: person, place, organization, event, etc.
-  label: string;               // Primary display name
+  label?: string;              // Optional display name
   description?: string;        // Optional concise description
 
   // =========================================================================
@@ -77,15 +80,22 @@ interface EntityManifestV1 {
 
   components: {
     properties?: IPLDLink;       // Structured key-value data
-    relationships?: IPLDLink;    // Outgoing relationships
+    relationships?: IPLDLink;    // Semantic graph (arke/relationships@v1)
     [filename: string]: IPLDLink; // Arbitrary file attachments
   };
 
   // =========================================================================
-  // SOURCE TRACKING
+  // HIERARCHICAL TREE STRUCTURE (optional, bidirectional)
   // =========================================================================
 
-  source_pis: string[];        // List of PI ULIDs that reference this entity
+  children_pi?: string[];      // Child entity IDs (downward pointers)
+  parent_pi?: string;          // Parent entity ID (upward pointer)
+
+  // =========================================================================
+  // MERGE TRACKING
+  // =========================================================================
+
+  merged_entities?: string[];  // Entity IDs that were merged into this one
 
   // =========================================================================
   // VERSION NOTE
@@ -174,23 +184,38 @@ The `properties` component stores structured key-value data:
 
 ## Merged Entity Schema
 
-When entity A is merged into entity B, a redirect version is created:
+When entity A is merged into entity B, a tombstone redirect version is created for A:
 
-**Schema ID:** `arke/entity-merged@v1`
+**Schema ID:** `arke/eidos-merged@v1`
 
 ```typescript
-interface EntityMergedV1 {
-  schema: 'arke/entity-merged@v1';
+interface EidosMerged {
+  schema: 'arke/eidos-merged@v1';
 
-  entity_id: string;           // The entity that was merged (A)
+  // =========================================================================
+  // IDENTITY (preserved from original)
+  // =========================================================================
 
-  // Version chain continues from original
+  id: string;                  // The entity that was merged (A)
+  type: string;                // Preserved from original entity
+
+  // =========================================================================
+  // VERSION CHAIN (continues from original - preserves history!)
+  // =========================================================================
+
   ver: number;                 // Next version number
   ts: string;                  // When merge happened
-  prev: IPLDLink;              // Link to last real version (NOT null)
+  prev: IPLDLink;              // Link to last real version (required - NOT null)
 
-  // Redirect target
+  // =========================================================================
+  // REDIRECT TARGET
+  // =========================================================================
+
   merged_into: string;         // Entity ID that this was merged into (B)
+
+  // =========================================================================
+  // VERSION NOTE
+  // =========================================================================
 
   note?: string;               // e.g., "Merged into Alice Austen (duplicate)"
 }
@@ -202,6 +227,64 @@ interface EntityMergedV1 {
 2. **No deletion** - The entity still exists, just redirects
 3. **Chain resolution** - API follows redirects automatically
 4. **Unmerge possible** - Can create new version from `prev` to restore
+5. **Type preserved** - The original entity type is preserved in the tombstone
+
+### Merge Tracking
+
+When entities are merged, the target entity tracks all absorbed entities:
+
+```typescript
+// Before merge
+A.merged_entities = ["M1", "M2"]  // A previously absorbed M1 and M2
+B.merged_entities = ["M3", "M4"]  // B previously absorbed M3 and M4
+
+// After merging A into B
+B.merged_entities = ["M3", "M4", "A", "M1", "M2"]  // Complete audit trail
+```
+
+This concatenation ensures full lineage tracking even through nested merges.
+
+---
+
+## Deleted Entity Schema
+
+When an entity is soft-deleted, a tombstone version is created:
+
+**Schema ID:** `arke/eidos-deleted@v1`
+
+```typescript
+interface EidosDeleted {
+  schema: 'arke/eidos-deleted@v1';
+
+  // =========================================================================
+  // IDENTITY (preserved from original)
+  // =========================================================================
+
+  id: string;                  // The deleted entity ID
+  type: string;                // Preserved from original entity
+
+  // =========================================================================
+  // VERSION CHAIN (continues from original - preserves history!)
+  // =========================================================================
+
+  ver: number;                 // Next version number
+  ts: string;                  // When deletion happened
+  prev: IPLDLink;              // Link to last real version (required - NOT null)
+
+  // =========================================================================
+  // DELETION METADATA
+  // =========================================================================
+
+  note?: string;               // Optional deletion reason
+}
+```
+
+### Key Points
+
+1. **Soft delete** - No data is actually destroyed
+2. **History preserved** - Full version chain remains intact via `prev` links
+3. **Undelete possible** - Can restore from `prev` to create new active version
+4. **Type preserved** - The original entity type is preserved in the tombstone
 
 ---
 
@@ -446,7 +529,7 @@ See [ENTITY-MERGE.md](./ENTITY-MERGE.md) for detailed merge documentation.
 ## Type Definitions
 
 Full TypeScript types are in:
-- `src/types/entity-manifest.ts` - Entity manifest schemas
+- `src/types/eidos.ts` - Eidos manifest schemas (active, merged, deleted)
 - `src/types/relationships.ts` - Relationships component schema
 
 Zod validation schemas are exported for runtime validation.
