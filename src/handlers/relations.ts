@@ -19,7 +19,7 @@ const MAX_CHILDREN_PER_REQUEST = 100;
  *
  * Coordinates bulk updates to prevent race conditions:
  * - Updates parent's children_pi array (add/remove)
- * - Updates all affected children's hierarchy_parent field
+ * - Updates all affected children's parent_pi field
  * - Processes children in batches of 10 for optimal performance
  * - Uses CAS protection with automatic retry
  *

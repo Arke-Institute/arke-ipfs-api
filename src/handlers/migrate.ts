@@ -33,7 +33,7 @@ interface EidosV1 {
   schema: 'arke/eidos@v1';
   id: string;
   type: string;
-  parent_pi?: string;
+  source_pi?: string;
   created_at: string;
   ver: number;
   ts: string;
@@ -58,7 +58,7 @@ function migrateManifestV1(manifest: ManifestV1, createdAt: string): EidosV1 {
     schema: 'arke/eidos@v1',
     id: manifest.pi,
     type: 'PI',
-    parent_pi: manifest.parent_pi,
+    source_pi: manifest.parent_pi,
     created_at: createdAt,
     ver: manifest.ver,
     ts: manifest.ts,
@@ -74,7 +74,7 @@ function migrateEntityV1(entity: EntityV1, createdAt: string): EidosV1 {
     schema: 'arke/eidos@v1',
     id: entity.pi,
     type: entity.entity_type,
-    parent_pi: entity.parent_pi,
+    source_pi: entity.parent_pi,
     created_at: createdAt,
     ver: entity.ver,
     ts: entity.ts,
@@ -103,7 +103,7 @@ export async function migrateEntityHandler(c: Context): Promise<Response> {
     }
 
     // Fetch manifest
-    const manifest = await ipfs.dagGet(currentTipCid);
+    const manifest = await ipfs.dagGet(currentTipCid) as any;
 
     // Check if already migrated
     if (manifest.schema === 'arke/eidos@v1') {
@@ -197,7 +197,7 @@ export async function migrateBatchHandler(c: Context): Promise<Response> {
           continue;
         }
 
-        const manifest = await ipfs.dagGet(currentTipCid);
+        const manifest = await ipfs.dagGet(currentTipCid) as any;
 
         if (manifest.schema === 'arke/eidos@v1') {
           results.push({ pi, status: 'already_migrated' });

@@ -23,8 +23,8 @@ import { createRelationshipsComponent } from '../../types/relationships';
  *
  * Features:
  * - Auto-generates ID if not provided
- * - Auto-updates parent if hierarchy_parent specified
- * - TODO: Auto-creates bidirectional relationships if parent_pi specified (provenance)
+ * - Auto-updates parent if parent_pi specified (tree structure)
+ * - TODO: Auto-creates bidirectional relationships if source_pi specified (provenance)
  */
 export async function createEntity(
   ipfs: IPFSService,
@@ -50,14 +50,14 @@ export async function createEntity(
   // ==========================================================================
   // STEP 2: VALIDATE NETWORK CONSISTENCY
   // ==========================================================================
-  // Validate hierarchy_parent matches network (prevents cross-network relationships)
-  if (req.hierarchy_parent) {
-    validatePiMatchesNetwork(req.hierarchy_parent, network);
-  }
-
-  // Validate parent_pi matches network (provenance)
+  // Validate parent_pi matches network (tree parent - prevents cross-network relationships)
   if (req.parent_pi) {
     validatePiMatchesNetwork(req.parent_pi, network);
+  }
+
+  // Validate source_pi matches network (provenance)
+  if (req.source_pi) {
+    validatePiMatchesNetwork(req.source_pi, network);
   }
 
   // Validate all children_pi match network (prevents cross-network relationships)
@@ -116,8 +116,8 @@ export async function createEntity(
     ...(req.label && { label: req.label }),
     ...(req.description && { description: req.description }),
     ...(req.children_pi && { children_pi: req.children_pi }),
-    ...(req.hierarchy_parent && { hierarchy_parent: req.hierarchy_parent }),
     ...(req.parent_pi && { parent_pi: req.parent_pi }),
+    ...(req.source_pi && { source_pi: req.source_pi }),
     ...(req.note && { note: req.note }),
   };
 
@@ -134,9 +134,9 @@ export async function createEntity(
   console.log(`[EIDOS] Created entity ${id} (type: ${type}, label: ${req.label || 'N/A'})`);
 
   // ==========================================================================
-  // STEP 9: AUTO-UPDATE PARENT (if hierarchy_parent provided)
+  // STEP 9: AUTO-UPDATE PARENT (if parent_pi provided)
   // ==========================================================================
-  if (req.hierarchy_parent) {
+  if (req.parent_pi) {
     // Higher retry limit for parent auto-update to handle high-concurrency scenarios
     // (e.g., 20 entities created simultaneously all updating same parent)
     const MAX_PARENT_UPDATE_RETRIES = 10;
@@ -144,7 +144,7 @@ export async function createEntity(
 
     for (let attempt = 0; attempt < MAX_PARENT_UPDATE_RETRIES; attempt++) {
       try {
-        const parentTip = await tipSvc.readTip(req.hierarchy_parent);
+        const parentTip = await tipSvc.readTip(req.parent_pi);
         const parentManifest = (await ipfs.dagGet(parentTip)) as Eidos;
 
         // Add this entity to parent's children_pi (dedupe)
@@ -162,9 +162,9 @@ export async function createEntity(
           };
 
           const newParentTip = await ipfs.dagPut(updatedParentManifest);
-          await tipSvc.writeTipAtomic(req.hierarchy_parent, newParentTip, parentTip);
+          await tipSvc.writeTipAtomic(req.parent_pi, newParentTip, parentTip);
 
-          console.log(`[HIERARCHY] Auto-updated parent ${req.hierarchy_parent} to include child ${id}`);
+          console.log(`[HIERARCHY] Auto-updated parent ${req.parent_pi} to include child ${id}`);
           parentUpdateSuccess = true;
           break; // Success, exit retry loop
         } else {
@@ -183,25 +183,25 @@ export async function createEntity(
           const jitter = Math.random() * baseDelay;
           const delay = baseDelay + jitter;
           const errorType = error instanceof TipWriteRaceError ? 'Tip write race' : 'CAS failure';
-          console.log(`[HIERARCHY] ${errorType} for ${req.hierarchy_parent}, retrying in ${delay.toFixed(0)}ms (attempt ${attempt + 2}/${MAX_PARENT_UPDATE_RETRIES})`);
+          console.log(`[HIERARCHY] ${errorType} for ${req.parent_pi}, retrying in ${delay.toFixed(0)}ms (attempt ${attempt + 2}/${MAX_PARENT_UPDATE_RETRIES})`);
           await new Promise(resolve => setTimeout(resolve, delay));
           continue;
         }
         // Log but don't fail entity creation if parent update fails after retries
-        console.error(`[HIERARCHY] Failed to update parent ${req.hierarchy_parent} after ${attempt + 1} attempts:`, error);
+        console.error(`[HIERARCHY] Failed to update parent ${req.parent_pi} after ${attempt + 1} attempts:`, error);
         break;
       }
     }
 
     if (!parentUpdateSuccess) {
-      console.warn(`[HIERARCHY] Entity ${id} created but parent ${req.hierarchy_parent} update failed - parent's children_pi may be incomplete`);
+      console.warn(`[HIERARCHY] Entity ${id} created but parent ${req.parent_pi} update failed - parent's children_pi may be incomplete`);
     }
   }
 
   // ==========================================================================
   // STEP 10: TODO - AUTO-CREATE BIDIRECTIONAL RELATIONSHIPS (Phase 3)
   // ==========================================================================
-  // TODO: If parent_pi specified (provenance):
+  // TODO: If source_pi specified (provenance):
   //   1. Add "extracted_from" relationship to entity's relationships component
   //   2. Update PI's relationships component with "created" relationship
   // See eidos-relationships.ts for implementation

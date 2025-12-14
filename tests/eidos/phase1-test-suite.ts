@@ -251,8 +251,8 @@ async function testEntityCreation(): Promise<void> {
     fail('Duplicate ID test failed', error);
   }
 
-  // Test 1f: Create entity with hierarchy_parent (auto-update parent)
-  subsection('1f: Create entity with hierarchy_parent');
+  // Test 1f: Create entity with parent_pi (auto-update parent)
+  subsection('1f: Create entity with parent_pi');
   try {
     // Create parent first
     const parent = await apiRequest('POST', '/entities', {
@@ -263,17 +263,17 @@ async function testEntityCreation(): Promise<void> {
 
     info(`Created parent: ${parent.data.id}`);
 
-    // Create child with hierarchy_parent
+    // Create child with parent_pi
     const child = await apiRequest('POST', '/entities', {
       type: 'person',
       label: 'Employee',
-      hierarchy_parent: parent.data.id,
+      parent_pi: parent.data.id,
       components: {},
       note: 'Child with auto-parent-update',
     }, 201);
 
     if (child.status === 201) {
-      pass(`Created child with hierarchy_parent: ${child.data.id}`);
+      pass(`Created child with parent_pi: ${child.data.id}`);
       info('Parent should auto-update to include child in children_pi array');
 
       // Verify parent was updated
@@ -562,7 +562,7 @@ async function testHierarchyOperations(): Promise<void> {
       expect_tip: parent.data.tip,
       add_children: [child1.data.id, child2.data.id],
       note: 'Added two children',
-    }, 201);
+    }, 200);
 
     if (
       data.parent_ver === 2 &&
@@ -585,19 +585,19 @@ async function testHierarchyOperations(): Promise<void> {
         fail('Parent children_pi missing children', parentFetched.data);
       }
 
-      // Verify children's hierarchy_parent field
+      // Verify children's parent_pi field
       const child1Fetched = await apiRequest('GET', `/entities/${child1.data.id}`, undefined, 200);
-      if (child1Fetched.data.hierarchy_parent === parent.data.id) {
-        pass('Child1 hierarchy_parent set correctly');
+      if (child1Fetched.data.parent_pi === parent.data.id) {
+        pass('Child1 parent_pi set correctly');
       } else {
-        fail('Child1 hierarchy_parent not set', child1Fetched.data);
+        fail('Child1 parent_pi not set', child1Fetched.data);
       }
 
       const child2Fetched = await apiRequest('GET', `/entities/${child2.data.id}`, undefined, 200);
-      if (child2Fetched.data.hierarchy_parent === parent.data.id) {
-        pass('Child2 hierarchy_parent set correctly');
+      if (child2Fetched.data.parent_pi === parent.data.id) {
+        pass('Child2 parent_pi set correctly');
       } else {
-        fail('Child2 hierarchy_parent not set', child2Fetched.data);
+        fail('Child2 parent_pi not set', child2Fetched.data);
       }
     } else {
       fail('Hierarchy update failed', data);
@@ -633,7 +633,7 @@ async function testHierarchyOperations(): Promise<void> {
       parent_pi: parent.data.id,
       expect_tip: parent.data.tip,
       add_children: [child1.data.id, child2.data.id],
-    }, 201);
+    }, 200);
 
     await sleep(500);
 
@@ -644,7 +644,7 @@ async function testHierarchyOperations(): Promise<void> {
       expect_tip: parentUpdated.data.manifest_cid,
       remove_children: [child1.data.id],
       note: 'Removed child1',
-    }, 201);
+    }, 200);
 
     if (removeResult.data.children_updated === 1 && removeResult.data.children_failed === 0) {
       pass('Removed child from parent');
@@ -663,12 +663,12 @@ async function testHierarchyOperations(): Promise<void> {
         fail('Parent children_pi incorrect after removal', parentFinal.data);
       }
 
-      // Verify child1's hierarchy_parent removed
+      // Verify child1's parent_pi removed
       const child1Final = await apiRequest('GET', `/entities/${child1.data.id}`, undefined, 200);
-      if (!child1Final.data.hierarchy_parent) {
-        pass('Child1 hierarchy_parent removed');
+      if (!child1Final.data.parent_pi) {
+        pass('Child1 parent_pi removed');
       } else {
-        fail('Child1 hierarchy_parent still set', child1Final.data);
+        fail('Child1 parent_pi still set', child1Final.data);
       }
     } else {
       fail('Remove children failed', removeResult.data);
@@ -697,7 +697,7 @@ async function testHierarchyOperations(): Promise<void> {
       parent_pi: parent.data.id,
       expect_tip: parent.data.tip,
       add_children: [child.data.id],
-    }, 201);
+    }, 200);
 
     await sleep(500);
 
@@ -707,7 +707,7 @@ async function testHierarchyOperations(): Promise<void> {
       parent_pi: parent.data.id,
       expect_tip: parentUpdated.data.manifest_cid,
       add_children: [child.data.id], // Same child
-    }, 201);
+    }, 200);
 
     await sleep(500);
 

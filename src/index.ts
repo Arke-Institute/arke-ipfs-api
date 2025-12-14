@@ -23,6 +23,8 @@ import {
 } from './handlers/versions';
 import { updateRelationsHandler, updateHierarchyHandler } from './handlers/relations';
 import { mergeEntityHandler, unmergeEntityHandler } from './handlers/merge';
+import { deleteEntityHandler } from './handlers/delete';
+import { undeleteEntityHandler } from './handlers/undelete';
 import { resolveHandler } from './handlers/resolve';
 import { downloadHandler, dagDownloadHandler } from './handlers/download';
 import { migrateEntityHandler, migrateBatchHandler } from './handlers/migrate';
@@ -120,6 +122,12 @@ app.post('/entities/:sourceId/merge', mergeEntityHandler);
 
 // POST /entities/:sourceId/unmerge - Unmerge (restore) source from target
 app.post('/entities/:sourceId/unmerge', unmergeEntityHandler);
+
+// POST /entities/:id/delete - Delete entity (creates tombstone)
+app.post('/entities/:id/delete', deleteEntityHandler);
+
+// POST /entities/:id/undelete - Restore deleted entity
+app.post('/entities/:id/undelete', undeleteEntityHandler);
 
 // POST /hierarchy - Update parent-child hierarchy relationships
 app.post('/hierarchy', updateHierarchyHandler);

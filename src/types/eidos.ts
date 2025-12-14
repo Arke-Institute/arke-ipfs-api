@@ -47,7 +47,7 @@ export const EidosSchema = z.object({
   // Identity (immutable after creation)
   id: EntityIdSchema,
   type: z.string().min(1), // REQUIRED: "PI", "person", "place", etc.
-  parent_pi: EntityIdSchema.optional(), // Optional: provenance (which PI extracted this entity)
+  source_pi: EntityIdSchema.optional(), // Optional: provenance (which PI extracted this entity)
   created_at: z.string().datetime(),
 
   // Version chain
@@ -69,7 +69,7 @@ export const EidosSchema = z.object({
 
   // Hierarchical tree structure (optional, bidirectional)
   children_pi: z.array(EntityIdSchema).optional(), // Downward pointers
-  hierarchy_parent: EntityIdSchema.optional(), // Upward pointer
+  parent_pi: EntityIdSchema.optional(), // Upward pointer (tree parent)
 
   // Merge tracking (entities that merged into this one)
   merged_entities: z.array(EntityIdSchema).optional(),
@@ -104,6 +104,28 @@ export const EidosMergedSchema = z.object({
 });
 
 export type EidosMerged = z.infer<typeof EidosMergedSchema>;
+
+// =============================================================================
+// Deleted Entity Schema (tombstone version - soft delete!)
+// =============================================================================
+
+export const EidosDeletedSchema = z.object({
+  schema: z.literal('arke/eidos-deleted@v1'),
+
+  // Identity (preserved from original)
+  id: EntityIdSchema,
+  type: z.string().min(1),
+
+  // Version chain (continues from original - preserves history!)
+  ver: z.number().int().positive(),
+  ts: z.string().datetime(),
+  prev: IPLDLinkSchema, // Links to last real version (required - not nullable)
+
+  // Deletion metadata
+  note: z.string().optional(), // Optional: deletion reason
+});
+
+export type EidosDeleted = z.infer<typeof EidosDeletedSchema>;
 
 // =============================================================================
 // Lightweight Entity (for context loading and batch fetching)
@@ -144,10 +166,10 @@ export const CreateEntityRequestSchema = z.object({
 
   // Hierarchical tree structure (optional)
   children_pi: z.array(EntityIdSchema).optional(),
-  hierarchy_parent: EntityIdSchema.optional(), // Set tree parent (also auto-updates parent's children_pi)
+  parent_pi: EntityIdSchema.optional(), // Set tree parent (also auto-updates parent's children_pi)
 
   // Provenance (optional)
-  parent_pi: EntityIdSchema.optional(), // Which PI extracted this entity
+  source_pi: EntityIdSchema.optional(), // Which PI extracted this entity
 
   // Initial properties and relationships (optional)
   properties: z.record(z.any()).optional(),
@@ -239,8 +261,8 @@ export interface GetEntityResponse {
     [key: string]: string | undefined;
   };
   children_pi?: string[];
-  hierarchy_parent?: string;
   parent_pi?: string;
+  source_pi?: string;
   merged_entities?: string[];
   note?: string;
 }
@@ -292,6 +314,52 @@ export interface UnmergeEntityResponse {
   target_id: string;
   target_ver: number;
   target_tip: string;
+}
+
+// Delete Entity Request
+export const DeleteEntityRequestSchema = z.object({
+  expect_tip: z.string().min(1), // CAS guard
+  note: z.string().optional(), // Optional: deletion reason
+});
+
+export type DeleteEntityRequest = z.infer<typeof DeleteEntityRequestSchema>;
+
+// Delete Entity Response
+export interface DeleteEntityResponse {
+  id: string;
+  deleted_ver: number;
+  deleted_at: string;
+  deleted_manifest_cid: string;
+  previous_ver: number;
+  prev_cid: string;
+}
+
+// Get Deleted Entity Response
+export interface GetEntityDeletedResponse {
+  pi: string; // DEPRECATED (backward compat)
+  id: string;
+  type: string;
+  manifest_cid: string;
+  status: 'deleted';
+  deleted_at: string;
+  note?: string;
+  prev_cid: string;
+}
+
+// Undelete Entity Request
+export const UndeleteEntityRequestSchema = z.object({
+  expect_tip: z.string().min(1), // CAS guard (current tombstone tip)
+  note: z.string().optional(), // Optional: reason for restoration
+});
+
+export type UndeleteEntityRequest = z.infer<typeof UndeleteEntityRequestSchema>;
+
+// Undelete Entity Response
+export interface UndeleteEntityResponse {
+  id: string;
+  restored_ver: number;
+  restored_from_ver: number;
+  new_manifest_cid: string;
 }
 
 // Batch Lightweight Request

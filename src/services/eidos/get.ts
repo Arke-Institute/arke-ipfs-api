@@ -5,8 +5,10 @@ import { processBatchedSettled } from '../../utils/batch';
 import {
   Eidos,
   EidosMerged,
+  EidosDeleted,
   GetEntityResponse,
   GetEntityMergedResponse,
+  GetEntityDeletedResponse,
   LightweightEntity,
   toLightweight,
   BatchLightweightResponse,
@@ -15,20 +17,20 @@ import { resolveEntityChain, linksToComponents } from './core';
 
 /**
  * Get an entity by ID
- * Returns redirect info if entity was merged
+ * Returns redirect info if entity was merged, or deleted status if deleted
  */
 export async function getEntity(
   ipfs: IPFSService,
   tipSvc: TipService,
   id: string,
   resolveLightweight: boolean = false
-): Promise<GetEntityResponse | GetEntityMergedResponse | LightweightEntity> {
+): Promise<GetEntityResponse | GetEntityMergedResponse | GetEntityDeletedResponse | LightweightEntity> {
   const tipCid = await tipSvc.readTip(id);
   if (!tipCid) {
     throw new NotFoundError('Entity', id);
   }
 
-  const manifest = (await ipfs.dagGet(tipCid)) as Eidos | EidosMerged;
+  const manifest = (await ipfs.dagGet(tipCid)) as Eidos | EidosMerged | EidosDeleted;
 
   // ==========================================================================
   // HANDLE MERGED ENTITY
@@ -56,6 +58,24 @@ export async function getEntity(
   }
 
   // ==========================================================================
+  // HANDLE DELETED ENTITY
+  // ==========================================================================
+  if (manifest.schema === 'arke/eidos-deleted@v1') {
+    const deleted = manifest as EidosDeleted;
+
+    return {
+      pi: id, // DEPRECATED
+      id,
+      type: deleted.type,
+      manifest_cid: tipCid,
+      status: 'deleted',
+      deleted_at: deleted.ts,
+      note: deleted.note,
+      prev_cid: deleted.prev['/'],
+    };
+  }
+
+  // ==========================================================================
   // HANDLE ACTIVE ENTITY
   // ==========================================================================
   const entity = manifest as Eidos;
@@ -78,8 +98,8 @@ export async function getEntity(
     prev_cid: entity.prev ? entity.prev['/'] : null,
     components: linksToComponents(entity.components),
     children_pi: entity.children_pi,
-    hierarchy_parent: entity.hierarchy_parent,
     parent_pi: entity.parent_pi,
+    source_pi: entity.source_pi,
     merged_entities: entity.merged_entities,
     note: entity.note,
   };

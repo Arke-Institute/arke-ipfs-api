@@ -46,5 +46,9 @@ export { updateHierarchy } from './eidos/hierarchy';
 export { mergeEntities } from './eidos/merge';
 export { unmergeEntity } from './eidos/unmerge';
 
+// Delete/Undelete (soft delete with tombstone)
+export { deleteEntity } from './eidos/delete';
+export { undeleteEntity } from './eidos/undelete';
+
 // Relationships (semantic graph: automatic bidirectional creation)
 export { createParentChildRelationships } from './eidos/relationships';

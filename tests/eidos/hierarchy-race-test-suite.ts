@@ -3,7 +3,7 @@
  * EIDOS HIERARCHY RACE CONDITION TEST SUITE
  *
  * Tests race conditions and CAS protection for hierarchical operations:
- * - Concurrent hierarchy_parent creation (auto-update parent)
+ * - Concurrent parent_pi creation (auto-update parent)
  * - Batch hierarchy endpoint (/hierarchy) race conditions
  * - Conflicting parent-child operations
  * - Children_pi_add/remove race conditions
@@ -129,11 +129,11 @@ async function updateHierarchy(req: any) {
 }
 
 // =============================================================================
-// TEST 1: Concurrent hierarchy_parent Creation
+// TEST 1: Concurrent parent_pi Creation
 // =============================================================================
 
 async function testConcurrentHierarchyParent(): Promise<void> {
-  section('Test 1: Concurrent hierarchy_parent Creation');
+  section('Test 1: Concurrent parent_pi Creation');
 
   try {
     subsection('1a: 10 children created simultaneously with same parent');
@@ -155,7 +155,7 @@ async function testConcurrentHierarchyParent(): Promise<void> {
         type: 'PI',
         label: `Child ${i}`,
         components: { data: childCid },
-        hierarchy_parent: parent.id,
+        parent_pi: parent.id,
       });
     });
 
@@ -179,19 +179,19 @@ async function testConcurrentHierarchyParent(): Promise<void> {
       });
     }
 
-    // Verify all children have correct hierarchy_parent
+    // Verify all children have correct parent_pi
     let correctParents = 0;
     for (const child of children) {
       const retrievedChild = await getEntity(child.id);
-      if (retrievedChild.hierarchy_parent === parent.id) {
+      if (retrievedChild.parent_pi === parent.id) {
         correctParents++;
       }
     }
 
     if (correctParents === 10) {
-      pass('All 10 children have correct hierarchy_parent');
+      pass('All 10 children have correct parent_pi');
     } else {
-      fail(`Only ${correctParents}/10 children have correct hierarchy_parent`);
+      fail(`Only ${correctParents}/10 children have correct parent_pi`);
     }
 
     subsection('1b: 20 children created simultaneously (stress test)');
@@ -211,7 +211,7 @@ async function testConcurrentHierarchyParent(): Promise<void> {
         type: 'PI',
         label: `Child ${i}`,
         components: { data: childCid },
-        hierarchy_parent: parent2.id,
+        parent_pi: parent2.id,
       });
     });
 
@@ -234,7 +234,7 @@ async function testConcurrentHierarchyParent(): Promise<void> {
     }
 
   } catch (error) {
-    fail('Concurrent hierarchy_parent creation test failed', error);
+    fail('Concurrent parent_pi creation test failed', error);
   }
 }
 
@@ -405,7 +405,7 @@ async function testConflictingOperations(): Promise<void> {
   section('Test 3: Conflicting Parent-Child Operations');
 
   try {
-    subsection('3a: hierarchy_parent creation vs /hierarchy endpoint');
+    subsection('3a: parent_pi creation vs /hierarchy endpoint');
 
     // Create parent
     const dataCid = await uploadTestFile('parent data', 'parent.txt');
@@ -434,7 +434,7 @@ async function testConflictingOperations(): Promise<void> {
 
     // Simultaneously:
     // 1. Add batch children via /hierarchy
-    // 2. Create new children with hierarchy_parent
+    // 2. Create new children with parent_pi
     const conflictPromises = [
       updateHierarchy({
         parent_pi: parent.id,
@@ -447,7 +447,7 @@ async function testConflictingOperations(): Promise<void> {
           type: 'PI',
           label: `Direct Child ${i}`,
           components: { data: childCid },
-          hierarchy_parent: parent.id,
+          parent_pi: parent.id,
         });
       }),
     ];
@@ -462,7 +462,7 @@ async function testConflictingOperations(): Promise<void> {
     const finalChildren = finalParent.children_pi || [];
 
     if (finalChildren.length === 10) {
-      pass('All 10 children added (5 via /hierarchy + 5 via hierarchy_parent)');
+      pass('All 10 children added (5 via /hierarchy + 5 via parent_pi)');
     } else {
       fail(`Expected 10 children, got ${finalChildren.length}`, {
         missing_count: 10 - finalChildren.length,
@@ -542,7 +542,7 @@ async function testHighConcurrencyStress(): Promise<void> {
   section('Test 4: High Concurrency Stress Test');
 
   try {
-    subsection('4a: 30 children with hierarchy_parent (stress test)');
+    subsection('4a: 30 children with parent_pi (stress test)');
 
     const dataCid = await uploadTestFile('stress parent', 'stress-parent.txt');
     const parent = await createEntity({
@@ -559,7 +559,7 @@ async function testHighConcurrencyStress(): Promise<void> {
         type: 'PI',
         label: `Stress Child ${i}`,
         components: { data: childCid },
-        hierarchy_parent: parent.id,
+        parent_pi: parent.id,
       });
     });
 
@@ -607,7 +607,7 @@ async function runAllTests(selectedTests?: string[]): Promise<void> {
     return selectedTests.some(t => testName.includes(t));
   };
 
-  if (shouldRun('test1') || shouldRun('concurrent') || shouldRun('hierarchy_parent')) {
+  if (shouldRun('test1') || shouldRun('concurrent') || shouldRun('parent_pi')) {
     await testConcurrentHierarchyParent();
   }
 

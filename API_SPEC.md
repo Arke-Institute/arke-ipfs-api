@@ -32,7 +32,7 @@ interface Eidos {
   schema: 'arke/eidos@v1';
   id: string;                    // Entity identifier (ULID)
   type: string;                  // Entity type (e.g., "PI", "Document")
-  parent_pi?: string;            // Optional: provenance (which PI extracted this)
+  source_pi?: string;            // Optional: provenance (which PI extracted this)
   created_at: string;            // ISO 8601 timestamp of v1 (immutable)
   ver: number;                   // Version number (1, 2, 3, ...)
   ts: string;                    // ISO 8601 timestamp of this version
@@ -41,7 +41,7 @@ interface Eidos {
     [label: string]: IPLDLink;
   };
   children_pi?: string[];        // Optional: child entity IDs (tree structure)
-  hierarchy_parent?: string;     // Optional: parent entity ID (tree structure)
+  parent_pi?: string;            // Optional: parent entity ID (tree structure)
   merged_entities?: string[];    // Optional: IDs merged into this entity
   label?: string;                // Optional: display name
   description?: string;          // Optional: human-readable description
@@ -52,8 +52,8 @@ interface Eidos {
 **Key Features:**
 - **Unified type system**: Single schema for all entity types
 - **Immutable created_at**: Tracks original creation time across all versions
-- **Provenance tracking**: `parent_pi` tracks which PI extracted this entity
-- **Hierarchy tracking**: `hierarchy_parent` and `children_pi` for tree navigation
+- **Provenance tracking**: `source_pi` tracks which PI extracted this entity
+- **Hierarchy tracking**: `parent_pi` and `children_pi` for tree navigation
 - **Merge tracking**: `merged_entities` array tracks merged entity IDs
 - **Rich metadata**: `label` and `description` for UI display
 
@@ -270,7 +270,8 @@ Create new entity with v1 manifest.
     "image": "bafybeiabc456..."
   },
   "children_pi": ["01GX..."],
-  "hierarchy_parent": "01PARENT...",
+  "parent_pi": "01PARENT...",
+  "source_pi": "01SOURCE...",
   "label": "Collection Name",
   "description": "Description text",
   "note": "Initial version"
@@ -281,7 +282,8 @@ Create new entity with v1 manifest.
 - `id` - Optional; server generates ULID if omitted
 - `type` - Required; entity type (e.g., "PI", "Collection", "Document")
 - `components` - Required; at least 1 component
-- `hierarchy_parent` - Optional; parent entity ID (auto-updates parent)
+- `parent_pi` - Optional; parent entity ID for tree structure (auto-updates parent)
+- `source_pi` - Optional; provenance - which PI extracted this entity
 - `children_pi` - Optional; child entity IDs (manual linking required)
 - `label`, `description`, `note` - Optional metadata
 
@@ -297,7 +299,7 @@ Create new entity with v1 manifest.
 ```
 
 **Side Effects:**
-- If `hierarchy_parent` provided: Parent automatically updated with new child
+- If `parent_pi` provided: Parent automatically updated with new child
 - Entity added to backend event stream
 - Immediately appears in `/entities` listings
 
@@ -331,7 +333,8 @@ Fetch latest manifest for entity.
     "metadata": "bafkreiabc123...",
     "image": "bafybeiabc456..."
   },
-  "hierarchy_parent": "01PARENT...",
+  "parent_pi": "01PARENT...",
+  "source_pi": "01SOURCE...",
   "children_pi": ["01GX..."],
   "label": "Collection Name",
   "description": "Description text",
@@ -396,7 +399,7 @@ Append new version to entity (CAS-protected).
 **Child Processing:**
 - Children processed in parallel batches of 10
 - Maximum 100 children per request
-- Auto-updates child's `hierarchy_parent` field
+- Auto-updates child's `parent_pi` field
 
 **Errors:**
 - `400` - Invalid request (>100 children, invalid component key, etc.)
@@ -502,7 +505,7 @@ Update parent-child hierarchy relationships (replaces deprecated `/relations`).
 
 **Processing:**
 - Updates parent's `children_pi` array
-- Auto-updates each child's `hierarchy_parent` field
+- Auto-updates each child's `parent_pi` field
 - Processes children in parallel batches of 10
 - Maximum 100 children per request
 
@@ -603,6 +606,130 @@ Restore a previously merged entity.
 - `400` - Source not merged or wrong target
 - `404` - Entity not found
 - `409` - CAS failure
+
+---
+
+### Delete Operations
+
+#### Delete Entity
+
+**`POST /entities/:id/delete`**
+
+Soft delete an entity by creating a tombstone manifest.
+
+**Path Parameters:**
+- `id` - Entity identifier
+
+**Request:**
+```json
+{
+  "expect_tip": "bafybeiabc789...",
+  "note": "Duplicate record"
+}
+```
+
+**Fields:**
+- `expect_tip` - Required; current tip CID (CAS guard)
+- `note` - Optional; reason for deletion
+
+**Response:** `201 Created`
+```json
+{
+  "id": "01J8ME3H6FZ3...",
+  "deleted_ver": 4,
+  "deleted_at": "2025-12-14T18:00:00Z",
+  "deleted_manifest_cid": "bafybeitomb...",
+  "previous_ver": 3,
+  "prev_cid": "bafybeiprev..."
+}
+```
+
+**What Happens:**
+1. Validates entity is active (not already deleted or merged)
+2. Creates tombstone with `arke/eidos-deleted@v1` schema
+3. Preserves version history via `prev` link
+4. Updates tip to point to tombstone
+
+**What Gets Preserved:**
+- Version history (accessible via `prev` chain)
+- Entity type (in tombstone)
+- All previous versions remain in IPFS
+
+**GET Deleted Entity:**
+```json
+{
+  "id": "01J8ME3H6FZ3...",
+  "type": "PI",
+  "manifest_cid": "bafybeitomb...",
+  "status": "deleted",
+  "deleted_at": "2025-12-14T18:00:00Z",
+  "note": "Duplicate record",
+  "prev_cid": "bafybeiprev..."
+}
+```
+
+**Errors:**
+- `400` - Entity already deleted or is merged
+- `404` - Entity not found
+- `409` - CAS failure (tip changed)
+
+---
+
+#### Undelete Entity
+
+**`POST /entities/:id/undelete`**
+
+Restore a deleted entity back to active state.
+
+**Path Parameters:**
+- `id` - Entity identifier
+
+**Request:**
+```json
+{
+  "expect_tip": "bafybeitomb...",
+  "note": "Restoring incorrectly deleted record"
+}
+```
+
+**Fields:**
+- `expect_tip` - Required; current tip CID (tombstone CID) for CAS guard
+- `note` - Optional; reason for restoration
+
+**Response:** `201 Created`
+```json
+{
+  "id": "01J8ME3H6FZ3...",
+  "restored_ver": 5,
+  "restored_from_ver": 3,
+  "new_manifest_cid": "bafybeirestored..."
+}
+```
+
+**What Happens:**
+1. Validates entity is currently deleted (tombstone)
+2. Fetches last active version before deletion
+3. Creates new active version with all restored data
+4. Preserves full history including tombstone
+
+**Version History:**
+```
+v1 (created) → v2 (updated) → v3 (active) → v4 (deleted) → v5 (restored)
+                                  ↑                           |
+                                  └───────────restored────────┘
+```
+
+**What Gets Restored:**
+- All components (CID references)
+- Properties and relationships
+- Children/parent links
+- Type, label, description
+- Complete version history
+
+**Errors:**
+- `400` - Entity is not deleted
+- `404` - Entity not found
+- `409` - CAS failure (tip changed)
 
 ---
 
@@ -841,6 +968,7 @@ Current schema: **`arke/eidos@v1`**
   "schema": "arke/eidos@v1",
   "id": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
   "type": "PI",
+  "source_pi": "01SOURCE...",
   "created_at": "2025-10-08T21:00:00Z",
   "ver": 3,
   "ts": "2025-10-08T22:10:15Z",
@@ -849,7 +977,7 @@ Current schema: **`arke/eidos@v1`**
     "metadata": { "/": "bafybeimeta..." },
     "image": { "/": "bafybeiimg..." }
   },
-  "hierarchy_parent": "01PARENT...",
+  "parent_pi": "01PARENT...",
   "children_pi": ["01GX...", "01GZ..."],
   "merged_entities": ["01MERGED1...", "01MERGED2..."],
   "label": "Collection Name",

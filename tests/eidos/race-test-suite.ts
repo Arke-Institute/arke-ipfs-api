@@ -130,7 +130,7 @@ async function createEntity(options: {
   label?: string;
   description?: string;
   id?: string;
-  hierarchy_parent?: string;
+  parent_pi?: string;
   children_pi?: string[];
   note?: string;
 }): Promise<{ id: string; tip: string; ver: number }> {
@@ -418,21 +418,21 @@ async function testConcurrentHierarchyAdds(concurrency: number): Promise<void> {
     if (missingChildren.length === 0) {
       pass(`All ${concurrency} children present in parent (final version: v${finalParent.ver})`);
 
-      // Verify bidirectional relationship - check hierarchy_parent on children
-      info('Verifying bidirectional hierarchy_parent updates...');
+      // Verify bidirectional relationship - check parent_pi on children
+      info('Verifying bidirectional parent_pi updates...');
       let allChildrenUpdated = true;
       for (const childId of children) {
         const child = await getEntity(childId);
-        if (child.hierarchy_parent !== parent.id) {
+        if (child.parent_pi !== parent.id) {
           allChildrenUpdated = false;
           break;
         }
       }
 
       if (allChildrenUpdated) {
-        pass(`All children have hierarchy_parent set to ${parent.id}`);
+        pass(`All children have parent_pi set to ${parent.id}`);
       } else {
-        warn('Some children missing hierarchy_parent field');
+        warn('Some children missing parent_pi field');
       }
     } else {
       fail(`Missing ${missingChildren.length} children in parent: ${missingChildren.slice(0, 3).join(', ')}...`);
@@ -444,13 +444,13 @@ async function testConcurrentHierarchyAdds(concurrency: number): Promise<void> {
 }
 
 /**
- * Test 4: Concurrent entity creation with hierarchy_parent
+ * Test 4: Concurrent entity creation with parent_pi
  *
  * Tests parent auto-update when multiple entities are created
- * with the same hierarchy_parent simultaneously.
+ * with the same parent_pi simultaneously.
  */
 async function testConcurrentEntityCreationWithParent(concurrency: number): Promise<void> {
-  section(`Test 4: Concurrent Entity Creation with hierarchy_parent (${concurrency} entities)`);
+  section(`Test 4: Concurrent Entity Creation with parent_pi (${concurrency} entities)`);
 
   try {
     // Create parent entity
@@ -463,8 +463,8 @@ async function testConcurrentEntityCreationWithParent(concurrency: number): Prom
     });
     info(`Created parent entity ${parent.id}`);
 
-    // Create N entities concurrently, all with same hierarchy_parent
-    info(`Creating ${concurrency} entities with hierarchy_parent=${parent.id} concurrently...`);
+    // Create N entities concurrently, all with same parent_pi
+    info(`Creating ${concurrency} entities with parent_pi=${parent.id} concurrently...`);
     const startTime = Date.now();
 
     const createPromises = Array.from({ length: concurrency }, async (_, i) => {
@@ -473,7 +473,7 @@ async function testConcurrentEntityCreationWithParent(concurrency: number): Prom
         type: 'PI',
         components: { data: childCid },
         label: `Auto Child ${i}`,
-        hierarchy_parent: parent.id,
+        parent_pi: parent.id,
         note: `Child ${i} via creation`,
       });
     });

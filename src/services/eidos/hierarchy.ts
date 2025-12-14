@@ -14,7 +14,7 @@ import {
  *
  * This function coordinates bulk updates to prevent race conditions:
  * - Updates parent's children_pi array (add/remove)
- * - Updates all affected children's hierarchy_parent field
+ * - Updates all affected children's parent_pi field
  * - Processes children in batches of 10 for optimal performance
  * - Uses CAS protection for atomic updates
  * - Retries automatically on race conditions
@@ -114,7 +114,7 @@ export async function updateHierarchy(
   }
 
   // ==========================================================================
-  // STEP 2: UPDATE CHILDREN'S hierarchy_parent FIELD (BATCHED)
+  // STEP 2: UPDATE CHILDREN'S parent_pi FIELD (BATCHED)
   // ==========================================================================
   const allAffectedChildren = [
     ...(req.add_children || []),
@@ -146,14 +146,14 @@ export async function updateHierarchy(
           const childTip = await tipSvc.readTip(childId);
           const childManifest = (await ipfs.dagGet(childTip)) as Eidos;
 
-          // Determine new hierarchy_parent value
-          let newHierarchyParent: string | undefined;
+          // Determine new parent_pi value
+          let newParentPi: string | undefined;
           if (isAdding) {
-            newHierarchyParent = req.parent_pi;
+            newParentPi = req.parent_pi;
           } else if (isRemoving) {
             // Only remove if current parent matches
-            if (childManifest.hierarchy_parent === req.parent_pi) {
-              newHierarchyParent = undefined;
+            if (childManifest.parent_pi === req.parent_pi) {
+              newParentPi = undefined;
             } else {
               // Child has different parent, skip update
               return;
@@ -161,7 +161,7 @@ export async function updateHierarchy(
           }
 
           // Skip if no change needed
-          if (childManifest.hierarchy_parent === newHierarchyParent) {
+          if (childManifest.parent_pi === newParentPi) {
             return;
           }
 
@@ -172,15 +172,15 @@ export async function updateHierarchy(
             ver: childManifest.ver + 1,
             ts: now,
             prev: link(childTip),
-            ...(newHierarchyParent !== undefined && { hierarchy_parent: newHierarchyParent }),
+            ...(newParentPi !== undefined && { parent_pi: newParentPi }),
             note: isAdding
               ? `Added to parent ${req.parent_pi}`
               : `Removed from parent ${req.parent_pi}`,
           };
 
           // If removing parent, explicitly delete the field
-          if (isRemoving && newHierarchyParent === undefined) {
-            delete updatedChild.hierarchy_parent;
+          if (isRemoving && newParentPi === undefined) {
+            delete updatedChild.parent_pi;
           }
 
           // Store new manifest
@@ -189,7 +189,7 @@ export async function updateHierarchy(
           // Update tip atomically
           await tipSvc.writeTipAtomic(childId, newChildTip, childTip);
 
-          console.log(`[HIERARCHY] Updated child ${childId} hierarchy_parent: ${newHierarchyParent || 'null'}`);
+          console.log(`[HIERARCHY] Updated child ${childId} parent_pi: ${newParentPi || 'null'}`);
           return;
         } catch (error) {
           // Retry on both CASError and TipWriteRaceError

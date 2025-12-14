@@ -120,7 +120,7 @@ interface EidosV1 {
   schema: 'arke/eidos@v1';              // Schema version identifier
   id: string;                            // Entity identifier (ULID)
   type: string;                          // Entity type (e.g., "PI", "Collection", "Document")
-  parent_pi?: string;                    // Optional: Provenance (which PI extracted this)
+  source_pi?: string;                    // Optional: Provenance (which PI extracted this)
   created_at: string;                    // ISO 8601 timestamp of version 1 (immutable)
   ver: number;                           // Version number (1, 2, 3, ...)
   ts: string;                            // ISO 8601 timestamp of this version
@@ -129,7 +129,7 @@ interface EidosV1 {
     [label: string]: IPLDLink;
   };
   children_pi?: string[];                // Optional: Child entity IDs (tree structure)
-  hierarchy_parent?: string;             // Optional: Parent entity ID (tree structure)
+  parent_pi?: string;                    // Optional: Parent entity ID (tree structure)
   merged_entities?: string[];            // Optional: IDs of entities merged into this one
   label?: string;                        // Optional: Display name
   description?: string;                  // Optional: Human-readable description
@@ -213,14 +213,14 @@ Before dag-json encoding, manifests are JSON:
 | `schema` | string | ✅ | Always `"arke/eidos@v1"` |
 | `id` | string | ✅ | Entity identifier (26-char ULID) |
 | `type` | string | ✅ | Entity type (e.g., "PI", "Collection") |
-| `parent_pi` | string | ❌ | Provenance - which PI extracted this entity |
+| `source_pi` | string | ❌ | Provenance - which PI extracted this entity |
 | `created_at` | string | ✅ | ISO 8601 timestamp of v1 (immutable) |
 | `ver` | number | ✅ | Version number, starts at 1 |
 | `ts` | string | ✅ | ISO 8601 timestamp of this version (UTC) |
 | `prev` | IPLDLink \| null | ✅ | Previous version CID, null for v1 |
 | `components` | object | ✅ | Map of label → CID, min 1 entry |
 | `children_pi` | string[] | ❌ | Array of child entity IDs (tree structure) |
-| `hierarchy_parent` | string | ❌ | Parent entity ID (tree structure) |
+| `parent_pi` | string | ❌ | Parent entity ID (tree structure) |
 | `merged_entities` | string[] | ❌ | IDs of entities merged into this one |
 | `label` | string | ❌ | Display name for UI |
 | `description` | string | ❌ | Human-readable description |
@@ -233,6 +233,59 @@ Manifests are stored as **dag-json** in IPFS:
 - IPLD links encoded as CID objects
 - Produces deterministic CIDs
 - Larger than dag-cbor but preserves IPLD link semantics
+
+---
+
+### Deleted Tombstone (dag-json)
+
+Schema: **`arke/eidos-deleted@v1`**
+
+When an entity is soft deleted, a lightweight tombstone manifest is created that preserves the version chain while marking the entity as deleted.
+
+```json
+{
+  "schema": "arke/eidos-deleted@v1",
+  "id": "01SOURCE123...",
+  "type": "PI",
+  "ver": 4,
+  "ts": "2025-12-14T18:00:00Z",
+  "prev": { "/": "bafybeilast..." },
+  "note": "Deleted - duplicate record"
+}
+```
+
+**Field Specifications:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `schema` | string | ✅ | Always `"arke/eidos-deleted@v1"` |
+| `id` | string | ✅ | Original entity ID |
+| `type` | string | ✅ | Preserved entity type |
+| `ver` | number | ✅ | Version number (incremented from last active) |
+| `ts` | string | ✅ | Deletion timestamp (ISO 8601) |
+| `prev` | IPLDLink | ✅ | Link to last active version (required - not nullable) |
+| `note` | string | ❌ | Optional deletion reason |
+
+**Key Properties:**
+- Minimal tombstone (no components, no relationships)
+- Version chain continues from deleted entity (`ver + 1`)
+- `prev` link required (unlike active Eidos where it's nullable for v1)
+- Preserves entity type for context
+- All previous versions remain accessible via `prev` chain
+- Can be restored via undelete operation
+
+**TypeScript Definition:**
+```typescript
+interface EidosDeleted {
+  schema: 'arke/eidos-deleted@v1';
+  id: string;
+  type: string;
+  ver: number;
+  ts: string;
+  prev: IPLDLink;
+  note?: string;
+}
+```
 
 ---
 
@@ -839,10 +892,15 @@ function isValidCID(cid: string): boolean {
         }
       }
     },
+    "source_pi": {
+      "type": "string",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+      "description": "Provenance - which PI extracted this entity"
+    },
     "parent_pi": {
       "type": "string",
       "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
-      "description": "Parent entity ID for bidirectional navigation"
+      "description": "Parent entity ID (tree structure)"
     },
     "children_pi": {
       "type": "array",

@@ -154,8 +154,8 @@ async function appendVersionAttempt(
 
   const newManifestCid = response.tip;
 
-  // Update children entities with hierarchy_parent (bidirectional relationship)
-  // Add hierarchy_parent to newly added children (BATCHED PARALLELIZATION)
+  // Update children entities with parent_pi (bidirectional relationship)
+  // Add parent_pi to newly added children (BATCHED PARALLELIZATION)
   if (body.children_pi_add) {
     await processBatchedSettled(
       body.children_pi_add,
@@ -164,27 +164,27 @@ async function appendVersionAttempt(
         const childTip = await tipSvc.readTip(childPi);
         const childManifest = (await ipfs.dagGet(childTip)) as Eidos;
 
-        // Only update if hierarchy_parent is different (avoid unnecessary versions)
-        if (childManifest.hierarchy_parent !== pi) {
+        // Only update if parent_pi is different (avoid unnecessary versions)
+        if (childManifest.parent_pi !== pi) {
           const updatedChildManifest: Eidos = {
             ...childManifest,
             ver: childManifest.ver + 1,
             ts: new Date().toISOString(),
             prev: link(childTip),
-            hierarchy_parent: pi, // Set hierarchy parent reference
-            note: `Set hierarchy parent to ${pi}`,
+            parent_pi: pi, // Set parent reference
+            note: `Set parent to ${pi}`,
           };
 
           const newChildTip = await ipfs.dagPut(updatedChildManifest);
           await tipSvc.writeTipAtomic(childPi, newChildTip, childTip);
 
-          console.log(`[RELATION] Updated child ${childPi} to set hierarchy_parent=${pi}`);
+          console.log(`[RELATION] Updated child ${childPi} to set parent_pi=${pi}`);
         }
       }
     );
   }
 
-  // Remove hierarchy_parent from removed children (BATCHED PARALLELIZATION)
+  // Remove parent_pi from removed children (BATCHED PARALLELIZATION)
   if (body.children_pi_remove) {
     await processBatchedSettled(
       body.children_pi_remove,
@@ -194,22 +194,22 @@ async function appendVersionAttempt(
         const childManifest = (await ipfs.dagGet(childTip)) as Eidos;
 
         // Only update if child actually has this parent
-        if (childManifest.hierarchy_parent === pi) {
+        if (childManifest.parent_pi === pi) {
           const updatedChildManifest: Eidos = {
             ...childManifest,
             ver: childManifest.ver + 1,
             ts: new Date().toISOString(),
             prev: link(childTip),
-            // hierarchy_parent is omitted (removed)
-            note: `Removed hierarchy parent ${pi}`,
+            // parent_pi is omitted (removed)
+            note: `Removed parent ${pi}`,
           };
-          // Remove hierarchy_parent field
-          delete updatedChildManifest.hierarchy_parent;
+          // Remove parent_pi field
+          delete updatedChildManifest.parent_pi;
 
           const newChildTip = await ipfs.dagPut(updatedChildManifest);
           await tipSvc.writeTipAtomic(childPi, newChildTip, childTip);
 
-          console.log(`[RELATION] Updated child ${childPi} to remove hierarchy_parent`);
+          console.log(`[RELATION] Updated child ${childPi} to remove parent_pi`);
         }
       }
     );

@@ -5,7 +5,7 @@
  * Tests the knowledge graph features of the unified Eidos schema:
  * - Properties component (structured metadata)
  * - Relationships component (semantic graph)
- * - Hierarchical tree structure (children_pi, hierarchy_parent)
+ * - Hierarchical tree structure (children_pi, parent_pi)
  *
  * Prerequisites:
  * - IPFS wrapper running locally (npm run dev)
@@ -373,7 +373,7 @@ async function testHierarchicalStructure(): Promise<void> {
   section('Test 3: Hierarchical Tree Structure');
 
   try {
-    subsection('3a: Create entity with hierarchy_parent (auto-update parent)');
+    subsection('3a: Create entity with parent_pi (auto-update parent)');
 
     // Create parent
     const parent = await createEntity({
@@ -384,22 +384,22 @@ async function testHierarchicalStructure(): Promise<void> {
 
     info(`Created parent: ${parent.id}`);
 
-    // Create child with hierarchy_parent (should auto-update parent's children_pi)
+    // Create child with parent_pi (should auto-update parent's children_pi)
     const child1 = await createEntity({
       type: 'PI',
       label: 'Child Document 1',
       components: {},
-      hierarchy_parent: parent.id,
+      parent_pi: parent.id,
     });
 
     info(`Created child1: ${child1.id}`);
 
-    // Verify child has hierarchy_parent set
+    // Verify child has parent_pi set
     const retrievedChild1 = await getEntity(child1.id);
-    if (retrievedChild1.hierarchy_parent === parent.id) {
-      pass('Child has hierarchy_parent set correctly');
+    if (retrievedChild1.parent_pi === parent.id) {
+      pass('Child has parent_pi set correctly');
     } else {
-      fail('Child hierarchy_parent mismatch', { expected: parent.id, got: retrievedChild1.hierarchy_parent });
+      fail('Child parent_pi mismatch', { expected: parent.id, got: retrievedChild1.parent_pi });
     }
 
     // Verify parent was auto-updated with child
@@ -414,20 +414,20 @@ async function testHierarchicalStructure(): Promise<void> {
       fail('Parent auto-update failed', { ver: retrievedParent.ver, children_pi: retrievedParent.children_pi });
     }
 
-    subsection('3b: Add multiple children via hierarchy_parent');
+    subsection('3b: Add multiple children via parent_pi');
 
     const child2 = await createEntity({
       type: 'PI',
       label: 'Child Document 2',
       components: {},
-      hierarchy_parent: parent.id,
+      parent_pi: parent.id,
     });
 
     const child3 = await createEntity({
       type: 'PI',
       label: 'Child Document 3',
       components: {},
-      hierarchy_parent: parent.id,
+      parent_pi: parent.id,
     });
 
     info(`Created child2: ${child2.id}`);
@@ -561,7 +561,7 @@ async function testCombinedFeatures(): Promise<void> {
       type: 'task',
       label: 'Implement Feature X',
       components: {},
-      hierarchy_parent: taskParent.id,
+      parent_pi: taskParent.id,
       properties: {
         priority: 'high',
         estimate_hours: 8,
@@ -590,9 +590,9 @@ async function testCombinedFeatures(): Promise<void> {
     // Check subtask has all features
     if (
       retrievedSubtask.components.properties &&
-      retrievedSubtask.hierarchy_parent === taskParent.id
+      retrievedSubtask.parent_pi === taskParent.id
     ) {
-      pass('Subtask has properties and hierarchy_parent');
+      pass('Subtask has properties and parent_pi');
     } else {
       fail('Subtask missing some features', retrievedSubtask);
     }
