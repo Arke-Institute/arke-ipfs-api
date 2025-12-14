@@ -3,6 +3,25 @@ import { IPFSService } from '../services/ipfs';
 import { assertValidCID } from '../utils/cid';
 
 /**
+ * GET /dag/:cid
+ * Download DAG node content by CID (for properties, relationships, etc.)
+ * Returns JSON representation of the DAG node
+ */
+export async function dagDownloadHandler(c: Context): Promise<Response> {
+  const ipfs: IPFSService = c.get('ipfs');
+  const cid = c.req.param('cid');
+
+  // Validate CID format
+  assertValidCID(cid, 'CID parameter');
+
+  // Get DAG node from IPFS
+  const dagNode = await ipfs.dagGet(cid);
+
+  // Return the DAG node as JSON
+  return c.json(dagNode);
+}
+
+/**
  * GET /cat/:cid
  * Download file content by CID
  * Streams bytes directly from IPFS

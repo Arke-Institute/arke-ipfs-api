@@ -5,7 +5,7 @@ import type { HonoEnv } from './types/hono';
 import { validateEnv, getIPFSURL, getBackendURL, getArkePI } from './config';
 import { IPFSService } from './services/ipfs';
 import { TipService } from './services/tip';
-import { createEntity, getEntity } from './services/entity-ops';
+import { createEntity, getEntity } from './services/eidos-ops';
 import { errorToResponse, ValidationError } from './utils/errors';
 import { Network, NETWORK_HEADER } from './types/network';
 
@@ -21,18 +21,10 @@ import {
   listVersionsHandler,
   getVersionHandler,
 } from './handlers/versions';
-import { updateRelationsHandler } from './handlers/relations';
+import { updateRelationsHandler, updateHierarchyHandler } from './handlers/relations';
+import { mergeEntityHandler, unmergeEntityHandler } from './handlers/merge';
 import { resolveHandler } from './handlers/resolve';
-import { downloadHandler } from './handlers/download';
-import {
-  createEntityKGHandler,
-  getEntityKGHandler,
-  appendEntityVersionHandler,
-  mergeEntityKGHandler,
-  unmergeEntityKGHandler,
-  deleteEntityKGHandler,
-  batchGetLightweightHandler,
-} from './handlers/entities-kg';
+import { downloadHandler, dagDownloadHandler } from './handlers/download';
 
 const app = new Hono<HonoEnv>();
 
@@ -101,6 +93,9 @@ app.post('/upload', uploadHandler);
 // GET /cat/:cid - Download file content
 app.get('/cat/:cid', downloadHandler);
 
+// GET /dag/:cid - Download DAG node (properties, relationships, etc.)
+app.get('/dag/:cid', dagDownloadHandler);
+
 // GET /entities - List all entities (must come before /:pi route)
 app.get('/entities', listEntitiesHandler);
 
@@ -119,38 +114,20 @@ app.get('/entities/:pi/versions', listVersionsHandler);
 // GET /entities/:pi/versions/:selector
 app.get('/entities/:pi/versions/:selector', getVersionHandler);
 
-// POST /relations
+// POST /entities/:sourceId/merge - Merge source into target
+app.post('/entities/:sourceId/merge', mergeEntityHandler);
+
+// POST /entities/:sourceId/unmerge - Unmerge (restore) source from target
+app.post('/entities/:sourceId/unmerge', unmergeEntityHandler);
+
+// POST /hierarchy - Update parent-child hierarchy relationships
+app.post('/hierarchy', updateHierarchyHandler);
+
+// POST /relations - DEPRECATED: Use /hierarchy instead (kept for backward compatibility)
 app.post('/relations', updateRelationsHandler);
 
 // GET /resolve/:pi
 app.get('/resolve/:pi', resolveHandler);
-
-// ===========================================================================
-// Knowledge Graph Entity Routes (/entities-kg)
-// ===========================================================================
-
-// POST /entities-kg/batch/lightweight - Batch fetch lightweight entities (must come before /:entity_id)
-app.post('/entities-kg/batch/lightweight', batchGetLightweightHandler);
-
-// POST /entities-kg - Create entity
-app.post('/entities-kg', createEntityKGHandler);
-
-// GET /entities-kg/:entity_id - Get entity
-app.get('/entities-kg/:entity_id', getEntityKGHandler);
-
-// POST /entities-kg/:entity_id/versions - Append version
-app.post('/entities-kg/:entity_id/versions', appendEntityVersionHandler);
-
-// POST /entities-kg/:entity_id/merge - Merge into another entity
-app.post('/entities-kg/:entity_id/merge', mergeEntityKGHandler);
-
-// POST /entities-kg/:entity_id/unmerge - Restore merged entity
-app.post('/entities-kg/:entity_id/unmerge', unmergeEntityKGHandler);
-
-// POST /entities-kg/:entity_id/delete - Delete entity (creates tombstone)
-app.post('/entities-kg/:entity_id/delete', deleteEntityKGHandler);
-
-// ===========================================================================
 
 // POST /arke/init - Initialize Arke origin block if it doesn't exist
 // Note: Arke origin block always uses main network (ARKE_PI starts with '00', not 'II')
@@ -187,8 +164,9 @@ app.post('/arke/init', async (c) => {
 
     // Create entity using service layer
     // ARKE_PI is a special fixed PI that belongs to main network
-    const response = await createEntity(ipfs, tipSvc, backendURL, {
-      pi: ARKE_PI,
+    const response = await createEntity(ipfs, tipSvc, {
+      id: ARKE_PI,
+      type: 'PI',
       components: { metadata: metadataCid },
       note: 'Genesis entity - root of the archive tree',
     }, network);

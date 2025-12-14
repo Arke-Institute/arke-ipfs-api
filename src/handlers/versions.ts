@@ -15,12 +15,16 @@ import { processBatchedSettled } from '../utils/batch';
 import {
   ManifestV1,
   link,
-  AppendVersionRequest,
-  AppendVersionResponse,
-  AppendVersionRequestSchema,
   ListVersionsResponse,
   GetEntityResponse,
 } from '../types/manifest';
+import {
+  Eidos,
+  AppendVersionRequest,
+  AppendVersionResponse,
+  AppendVersionRequestSchema,
+} from '../types/eidos';
+import { appendVersion } from '../services/eidos-ops';
 import { Network, validatePiMatchesNetwork } from '../types/network';
 import { HonoEnv } from '../types/hono';
 import { checkEditPermission } from '../lib/permissions';
@@ -49,14 +53,17 @@ export async function appendVersionHandler(c: Context<HonoEnv>): Promise<Respons
   validatePiMatchesNetwork(pi, network);
 
   // Permission check - verify user can edit this entity
-  const userId = c.req.header('X-User-Id') || null;
-  const permCheck = await checkEditPermission(c.env, userId, pi);
+  // Skip permission check for test network (ephemeral data, no access control needed)
+  if (network !== 'test') {
+    const userId = c.req.header('X-User-Id') || null;
+    const permCheck = await checkEditPermission(c.env, userId, pi);
 
-  if (!permCheck.allowed) {
-    return c.json({
-      error: 'FORBIDDEN',
-      message: permCheck.reason || 'Not authorized to edit this entity',
-    }, 403);
+    if (!permCheck.allowed) {
+      return c.json({
+        error: 'FORBIDDEN',
+        message: permCheck.reason || 'Not authorized to edit this entity',
+      }, 403);
+    }
   }
 
   // Parse body ONCE (can't re-read request body stream)
@@ -82,10 +89,14 @@ export async function appendVersionHandler(c: Context<HonoEnv>): Promise<Respons
       response = await appendVersionAttempt(ipfs, tipSvc, pi, body, c.env);
       break;
     } catch (error) {
-      if (error instanceof TipWriteRaceError && attempt < MAX_CAS_RETRIES - 1) {
+      // Retry on both CASError (initial check failure) and TipWriteRaceError (atomic write race)
+      const isRetryableError = (error instanceof TipWriteRaceError) || (error instanceof CASError);
+
+      if (isRetryableError && attempt < MAX_CAS_RETRIES - 1) {
         // Exponential backoff: 50ms, 100ms, 200ms
         const delay = 50 * (2 ** attempt) + Math.random() * 50;
-        console.log(`[CAS] Tip write race detected for ${error.pi}, retrying in ${delay.toFixed(0)}ms (attempt ${attempt + 2}/${MAX_CAS_RETRIES})`);
+        const errorType = error instanceof TipWriteRaceError ? 'Tip write race' : 'CAS failure';
+        console.log(`[CAS] ${errorType} detected for ${pi}, retrying in ${delay.toFixed(0)}ms (attempt ${attempt + 2}/${MAX_CAS_RETRIES})`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
@@ -125,52 +136,6 @@ async function appendVersionAttempt(
   env: any
 ): Promise<Response> {
 
-  // Read current tip
-  const currentTip = await tipSvc.readTip(pi);
-
-  // CAS check
-  if (currentTip !== body.expect_tip) {
-    throw new CASError({
-      actual: currentTip,
-      expect: body.expect_tip,
-    });
-  }
-
-  // Fetch old manifest
-  const oldManifest = (await ipfs.dagGet(currentTip)) as ManifestV1;
-
-  // Validate component CIDs if provided
-  if (body.components) {
-    validateCIDRecord(body.components, 'components');
-  }
-
-  // Validate components_remove
-  if (body.components_remove) {
-    // Check that all keys to be removed exist in current manifest
-    for (const key of body.components_remove) {
-      if (!(key in oldManifest.components)) {
-        throw new ValidationError(
-          `Cannot remove component '${key}': not found in manifest`,
-          { available_keys: Object.keys(oldManifest.components) }
-        );
-      }
-    }
-
-    // Check for conflicts between components_remove and components
-    if (body.components) {
-      const removeSet = new Set(body.components_remove);
-      const addSet = new Set(Object.keys(body.components));
-      const conflicts = [...removeSet].filter((key) => addSet.has(key));
-
-      if (conflicts.length > 0) {
-        throw new ValidationError(
-          `Cannot remove and add same components: ${conflicts.join(', ')}`,
-          { conflicting_keys: conflicts }
-        );
-      }
-    }
-  }
-
   // Validate child count limits
   if (body.children_pi_add && body.children_pi_add.length > MAX_CHILDREN_PER_REQUEST) {
     throw new ValidationError(
@@ -184,124 +149,70 @@ async function appendVersionAttempt(
     );
   }
 
-  // Compute new manifest
-  const now = new Date().toISOString();
+  // Call eidos-ops appendVersion (handles CAS, manifest update, tip write)
+  const response = await appendVersion(ipfs, tipSvc, pi, body);
 
-  // Process component changes (remove first, then add/update)
-  const newComponents = { ...oldManifest.components };
+  const newManifestCid = response.tip;
 
-  // 1. Remove components
-  if (body.components_remove) {
-    for (const key of body.components_remove) {
-      delete newComponents[key];
-    }
-  }
-
-  // 2. Add/update components
-  if (body.components) {
-    for (const [label, cid] of Object.entries(body.components)) {
-      newComponents[label] = link(cid);
-    }
-  }
-
-  // Compute new children_pi (apply add/remove)
-  let newChildrenPi = oldManifest.children_pi || [];
-  if (body.children_pi_add) {
-    newChildrenPi = [...newChildrenPi, ...body.children_pi_add];
-  }
-  if (body.children_pi_remove) {
-    const removeSet = new Set(body.children_pi_remove);
-    newChildrenPi = newChildrenPi.filter((childPi) => !removeSet.has(childPi));
-  }
-
-  const newManifest: ManifestV1 = {
-    schema: 'arke/manifest@v1',
-    pi,
-    ver: oldManifest.ver + 1,
-    ts: now,
-    prev: link(currentTip), // Link to old manifest
-    components: newComponents,
-    ...(newChildrenPi.length > 0 && { children_pi: newChildrenPi }),
-    ...(oldManifest.parent_pi && { parent_pi: oldManifest.parent_pi }),
-    ...(body.note && { note: body.note }),
-  };
-
-  // Store new manifest
-  const newManifestCid = await ipfs.dagPut(newManifest);
-
-  // Update .tip with atomic CAS verification
-  await tipSvc.writeTipAtomic(pi, newManifestCid, currentTip);
-
-  // Update children entities with parent_pi (bidirectional relationship)
-  // Add parent_pi to newly added children (BATCHED PARALLELIZATION)
+  // Update children entities with hierarchy_parent (bidirectional relationship)
+  // Add hierarchy_parent to newly added children (BATCHED PARALLELIZATION)
   if (body.children_pi_add) {
     await processBatchedSettled(
       body.children_pi_add,
       BATCH_SIZE,
       async (childPi) => {
         const childTip = await tipSvc.readTip(childPi);
-        const childManifest = (await ipfs.dagGet(childTip)) as ManifestV1;
+        const childManifest = (await ipfs.dagGet(childTip)) as Eidos;
 
-        // Only update if parent_pi is different (avoid unnecessary versions)
-        if (childManifest.parent_pi !== pi) {
-          const updatedChildManifest: ManifestV1 = {
-            schema: 'arke/manifest@v1',
-            pi: childPi,
+        // Only update if hierarchy_parent is different (avoid unnecessary versions)
+        if (childManifest.hierarchy_parent !== pi) {
+          const updatedChildManifest: Eidos = {
+            ...childManifest,
             ver: childManifest.ver + 1,
             ts: new Date().toISOString(),
             prev: link(childTip),
-            components: childManifest.components,
-            ...(childManifest.children_pi && { children_pi: childManifest.children_pi }),
-            parent_pi: pi, // Set parent reference
-            note: `Set parent to ${pi}`,
+            hierarchy_parent: pi, // Set hierarchy parent reference
+            note: `Set hierarchy parent to ${pi}`,
           };
 
           const newChildTip = await ipfs.dagPut(updatedChildManifest);
           await tipSvc.writeTipAtomic(childPi, newChildTip, childTip);
 
-          console.log(`[RELATION] Updated child ${childPi} to set parent_pi=${pi}`);
+          console.log(`[RELATION] Updated child ${childPi} to set hierarchy_parent=${pi}`);
         }
       }
     );
   }
 
-  // Remove parent_pi from removed children (BATCHED PARALLELIZATION)
+  // Remove hierarchy_parent from removed children (BATCHED PARALLELIZATION)
   if (body.children_pi_remove) {
     await processBatchedSettled(
       body.children_pi_remove,
       BATCH_SIZE,
       async (childPi) => {
         const childTip = await tipSvc.readTip(childPi);
-        const childManifest = (await ipfs.dagGet(childTip)) as ManifestV1;
+        const childManifest = (await ipfs.dagGet(childTip)) as Eidos;
 
         // Only update if child actually has this parent
-        if (childManifest.parent_pi === pi) {
-          const updatedChildManifest: ManifestV1 = {
-            schema: 'arke/manifest@v1',
-            pi: childPi,
+        if (childManifest.hierarchy_parent === pi) {
+          const updatedChildManifest: Eidos = {
+            ...childManifest,
             ver: childManifest.ver + 1,
             ts: new Date().toISOString(),
             prev: link(childTip),
-            components: childManifest.components,
-            ...(childManifest.children_pi && { children_pi: childManifest.children_pi }),
-            // parent_pi is omitted (removed)
-            note: `Removed parent ${pi}`,
+            // hierarchy_parent is omitted (removed)
+            note: `Removed hierarchy parent ${pi}`,
           };
+          // Remove hierarchy_parent field
+          delete updatedChildManifest.hierarchy_parent;
 
           const newChildTip = await ipfs.dagPut(updatedChildManifest);
           await tipSvc.writeTipAtomic(childPi, newChildTip, childTip);
 
-          console.log(`[RELATION] Updated child ${childPi} to remove parent_pi`);
+          console.log(`[RELATION] Updated child ${childPi} to remove hierarchy_parent`);
         }
       }
     );
-  }
-
-  // Optional: efficient pin swap
-  try {
-    await ipfs.pinUpdate(currentTip, newManifestCid);
-  } catch {
-    // Pin update can fail if old manifest isn't pinned; ignore
   }
 
   // Append update event to event stream (optimization - don't fail version append if this fails)
@@ -310,22 +221,14 @@ async function appendVersionAttempt(
     const eventCid = await appendEvent(backendURL, {
       type: 'update',
       pi,
-      ver: newManifest.ver,
+      ver: response.ver,
       tip_cid: newManifestCid,
     });
-    console.log(`[EVENT] Appended update event for entity ${pi} v${newManifest.ver}: ${eventCid}`);
+    console.log(`[EVENT] Appended update event for entity ${pi} v${response.ver}: ${eventCid}`);
   } catch (error) {
     // Log error but don't fail the request - event append is async optimization
     console.error(`[EVENT] Failed to append update event for entity ${pi}:`, error);
   }
-
-  // Response
-  const response: AppendVersionResponse = {
-    pi,
-    ver: newManifest.ver,
-    manifest_cid: newManifestCid,
-    tip: newManifestCid,
-  };
 
   return new Response(JSON.stringify(response), {
     status: 201,

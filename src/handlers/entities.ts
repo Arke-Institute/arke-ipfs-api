@@ -5,29 +5,29 @@ import { syncPI } from '../services/sync';
 import { validateBody } from '../utils/validation';
 import { getBackendURL } from '../config';
 import { listEventsFromBackend } from '../clients/ipfs-server';
-import { createEntity, getEntity } from '../services/entity-ops';
+import { createEntity, getEntity } from '../services/eidos-ops';
 import {
-  ManifestV1,
+  Eidos,
   CreateEntityRequestSchema,
-} from '../types/manifest';
+} from '../types/eidos';
 import { Network, validatePiMatchesNetwork } from '../types/network';
 import { HonoEnv } from '../types/hono';
 
 /**
  * POST /entities
- * Create new entity with v1 manifest
+ * Create new entity with unified Eidos schema
+ * Supports both PIs (type: "PI") and KG entities (type: "person", "place", etc.)
  */
 export async function createEntityHandler(c: Context<HonoEnv>): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
-  const backendURL = getBackendURL(c.env);
 
   // Validate request body
   const body = await validateBody(c.req.raw, CreateEntityRequestSchema);
 
   // Call service layer (network validation happens inside createEntity)
-  const response = await createEntity(ipfs, tipSvc, backendURL, body, network);
+  const response = await createEntity(ipfs, tipSvc, body, network);
 
   // Fire-and-forget sync to index-sync service
   c.executionCtx.waitUntil(
@@ -44,6 +44,7 @@ export async function createEntityHandler(c: Context<HonoEnv>): Promise<Response
 /**
  * GET /entities/:pi
  * Fetch latest manifest for entity
+ * Returns redirect info if entity was merged
  */
 export async function getEntityHandler(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
@@ -144,10 +145,12 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
     console.log(`[HANDLER] Fetching metadata for ${baseEntities.length} entities...`);
     entities = await Promise.all(
       baseEntities.map(async ({ pi, tip }) => {
-        const manifest = (await ipfs.dagGet(tip)) as ManifestV1;
+        const manifest = (await ipfs.dagGet(tip)) as Eidos;
         return {
           pi,
           tip,
+          type: manifest.type,
+          label: manifest.label || null,
           ver: manifest.ver,
           ts: manifest.ts,
           note: manifest.note || null,
