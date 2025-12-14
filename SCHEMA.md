@@ -120,6 +120,7 @@ interface EidosV1 {
   schema: 'arke/eidos@v1';              // Schema version identifier
   id: string;                            // Entity identifier (ULID)
   type: string;                          // Entity type (e.g., "PI", "Collection", "Document")
+  parent_pi?: string;                    // Optional: Provenance (which PI extracted this)
   created_at: string;                    // ISO 8601 timestamp of version 1 (immutable)
   ver: number;                           // Version number (1, 2, 3, ...)
   ts: string;                            // ISO 8601 timestamp of this version
@@ -127,8 +128,9 @@ interface EidosV1 {
   components: {                          // Named CID references
     [label: string]: IPLDLink;
   };
-  parent_pi?: string;                    // Optional: Parent entity ID
-  children_pi?: string[];                // Optional: Child entity IDs
+  children_pi?: string[];                // Optional: Child entity IDs (tree structure)
+  hierarchy_parent?: string;             // Optional: Parent entity ID (tree structure)
+  merged_entities?: string[];            // Optional: IDs of entities merged into this one
   label?: string;                        // Optional: Display name
   description?: string;                  // Optional: Human-readable description
   note?: string;                         // Optional: Change description
@@ -211,13 +213,15 @@ Before dag-json encoding, manifests are JSON:
 | `schema` | string | ✅ | Always `"arke/eidos@v1"` |
 | `id` | string | ✅ | Entity identifier (26-char ULID) |
 | `type` | string | ✅ | Entity type (e.g., "PI", "Collection") |
+| `parent_pi` | string | ❌ | Provenance - which PI extracted this entity |
 | `created_at` | string | ✅ | ISO 8601 timestamp of v1 (immutable) |
 | `ver` | number | ✅ | Version number, starts at 1 |
 | `ts` | string | ✅ | ISO 8601 timestamp of this version (UTC) |
 | `prev` | IPLDLink \| null | ✅ | Previous version CID, null for v1 |
 | `components` | object | ✅ | Map of label → CID, min 1 entry |
-| `parent_pi` | string | ❌ | Parent entity ID (for bidirectional nav) |
-| `children_pi` | string[] | ❌ | Array of child IDs (if parent) |
+| `children_pi` | string[] | ❌ | Array of child entity IDs (tree structure) |
+| `hierarchy_parent` | string | ❌ | Parent entity ID (tree structure) |
+| `merged_entities` | string[] | ❌ | IDs of entities merged into this one |
 | `label` | string | ❌ | Display name for UI |
 | `description` | string | ❌ | Human-readable description |
 | `note` | string | ❌ | Change note for this version |

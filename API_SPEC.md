@@ -2,7 +2,7 @@
 
 ## Overview
 
-This API manages versioned entities (PIs) as immutable IPLD manifests in IPFS, with mutable `.tip` pointers in MFS for fast lookups.
+This API manages versioned entities using the unified **`arke/eidos@v1`** schema as immutable IPLD manifests in IPFS, with mutable `.tip` pointers in MFS for fast lookups.
 
 **Production URL:** `https://api.arke.institute`
 **Local Development URL:** `http://localhost:8787`
@@ -13,138 +13,97 @@ This API manages versioned entities (PIs) as immutable IPLD manifests in IPFS, w
 
 ### Architecture
 
-The API uses a hybrid snapshot + linked list backend for scalable entity listing:
+The API uses a hybrid snapshot + event stream backend for scalable entity listing:
 - **IPFS Storage**: Immutable manifests stored as dag-json with version chains
-- **MFS Tips**: Fast `.tip` file lookups for current versions
-- **Backend API**: IPFS Server (FastAPI) manages snapshot-based entity indexing
-- **Recent Chain**: New entities appended to linked list for fast access
-- **Snapshots**: Periodic snapshots for efficient deep pagination
+- **MFS Tips**: Fast `.tip` file lookups for current versions (sharded by last 4 chars)
+- **Backend API**: Event-sourced index with snapshots for entity listing
+- **Eidos Schema**: Unified `arke/eidos@v1` schema for all entities
 
 This architecture supports millions of entities while maintaining sub-100ms query performance.
 
 ---
 
-## Concurrency and Race Condition Handling
+## Current Schema: arke/eidos@v1
 
-### Compare-And-Swap (CAS) Protection
-
-All write operations (version appending, relation updates) use **atomic Compare-And-Swap (CAS)** to prevent data loss from concurrent updates. The API implements three-layer protection:
-
-1. **Server-side atomic write** - Pre/post verification detects races
-2. **Server-side automatic retry** - Up to 3-10 retries with exponential backoff
-3. **Client responsibility** - Handle 409 CAS_FAILURE and retry with fresh tip
-
-### CRITICAL: Client-Side Retry Logic Required
-
-**⚠️ Clients MUST implement retry logic for 409 CAS_FAILURE errors.**
-
-When multiple operations update the same entity concurrently:
-- Server handles internal races automatically (transparent to client)
-- Client gets 409 CAS_FAILURE if `expect_tip` is stale (tip changed since last read)
-- **Client MUST fetch fresh tip and retry** - this is NOT optional
-
-**Example: Proper Client Implementation**
+All entities now use the unified **`arke/eidos@v1`** schema:
 
 ```typescript
-async function appendVersion(
-  pi: string,
-  updates: { components?: Record<string, string>, note?: string }
-): Promise<{ pi: string; tip: string; ver: number }> {
-  const MAX_RETRIES = 10;
-  let expectTip = (await getEntity(pi)).manifest_cid; // Initial tip
-
-  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    try {
-      return await fetch(`${API_URL}/entities/${pi}/versions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expect_tip: expectTip, ...updates }),
-      }).then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      });
-    } catch (error: any) {
-      // Check if 409 CAS_FAILURE
-      if (error.message.includes('HTTP 409') && attempt < MAX_RETRIES - 1) {
-        // Exponential backoff with jitter
-        const baseDelay = 100 * (2 ** attempt);
-        const jitter = Math.random() * baseDelay;
-        await sleep(baseDelay + jitter);
-
-        // CRITICAL: Fetch fresh tip before retry
-        expectTip = (await getEntity(pi)).manifest_cid;
-        continue;
-      }
-      throw error; // Not 409 or exhausted retries
-    }
-  }
-  throw new Error('Failed after max retries');
+interface Eidos {
+  schema: 'arke/eidos@v1';
+  id: string;                    // Entity identifier (ULID)
+  type: string;                  // Entity type (e.g., "PI", "Document")
+  parent_pi?: string;            // Optional: provenance (which PI extracted this)
+  created_at: string;            // ISO 8601 timestamp of v1 (immutable)
+  ver: number;                   // Version number (1, 2, 3, ...)
+  ts: string;                    // ISO 8601 timestamp of this version
+  prev: IPLDLink | null;         // Link to previous version (null for v1)
+  components: {                  // Named CID references
+    [label: string]: IPLDLink;
+  };
+  children_pi?: string[];        // Optional: child entity IDs (tree structure)
+  hierarchy_parent?: string;     // Optional: parent entity ID (tree structure)
+  merged_entities?: string[];    // Optional: IDs merged into this entity
+  label?: string;                // Optional: display name
+  description?: string;          // Optional: human-readable description
+  note?: string;                 // Optional: change description
 }
 ```
 
-**Why This Matters:**
+**Key Features:**
+- **Unified type system**: Single schema for all entity types
+- **Immutable created_at**: Tracks original creation time across all versions
+- **Provenance tracking**: `parent_pi` tracks which PI extracted this entity
+- **Hierarchy tracking**: `hierarchy_parent` and `children_pi` for tree navigation
+- **Merge tracking**: `merged_entities` array tracks merged entity IDs
+- **Rich metadata**: `label` and `description` for UI display
 
-Without client-side retry, concurrent operations will fail:
-```
-Operation 1: Read tip=v2 → Update component A → 201 Created (v3)
-Operation 2: Read tip=v2 → Update component B → 409 CAS_FAILURE ❌
-```
+---
 
-With proper retry:
-```
-Operation 1: Read tip=v2 → Update component A → 201 Created (v3)
-Operation 2: Read tip=v2 → Update component B → 409 CAS_FAILURE
-            → Retry: Read tip=v3 → Update component B → 201 Created (v4) ✅
-```
+## Concurrency & Race Condition Handling
 
-**Best Practices:**
-- Always provide `expect_tip` in write operations
-- Implement retry with exponential backoff (10 attempts recommended)
-- Add jitter to prevent thundering herd
-- Fetch fresh tip from server on each retry
-- For bulk operations: Consider sequential processing if retry rate is high
+### Compare-And-Swap (CAS) Protection
 
-**Which Errors to Retry:**
+All write operations use **atomic Compare-And-Swap (CAS)** to prevent data loss from concurrent updates:
 
-✅ **ALWAYS retry these errors:**
-- `409 CAS_FAILURE` - Tip changed since last read; fetch fresh tip and retry
-- `503 IPFS_ERROR` - Temporary IPFS connectivity issue; retry with backoff
-- `503 BACKEND_ERROR` - Temporary backend unavailable; retry with backoff
-- Network errors (`ECONNRESET`, `ETIMEDOUT`, fetch failures) - Transient issues
+1. **Client provides `expect_tip`** - The manifest CID they read
+2. **Server validates** - Checks actual tip matches expected tip
+3. **Server retries internally** - Up to 3 attempts with 50ms backoff
+4. **Client handles 409** - Retry with fresh tip if server validation fails
 
-❌ **NEVER retry these errors:**
-- `400 VALIDATION_ERROR` - Invalid request body; fix the request
-- `404 NOT_FOUND` - Entity doesn't exist; create it first or check PI
-- `409 CONFLICT` (non-CAS) - PI already exists; use different PI
-- `413 PAYLOAD_TOO_LARGE` - File exceeds size limits; reduce file size
+### CRITICAL: Client-Side Retry Logic Required
 
-**Retry Configuration:**
+**✅ ALWAYS retry these errors:**
+- `409 CAS_FAILURE` - Tip changed; fetch fresh tip and retry
+- `503 IPFS_ERROR` - Temporary IPFS issue; retry with backoff
+- `503 BACKEND_ERROR` - Backend unavailable; retry with backoff
+- Network errors (`ECONNRESET`, `ETIMEDOUT`, fetch failures)
+
+**❌ NEVER retry these errors:**
+- `400 VALIDATION_ERROR` - Invalid request; fix the request
+- `404 NOT_FOUND` - Entity doesn't exist; create it or check ID
+- `409 CONFLICT` (non-CAS) - ID already exists; use different ID
+- `413 PAYLOAD_TOO_LARGE` - File too large; reduce size
+
+### Recommended Retry Configuration
+
 ```typescript
 const RETRY_CONFIG = {
   maxRetries: 10,                  // Max retry attempts
-  baseDelay: 100,                  // Base delay in ms (doubles each retry)
-  maxDelay: 5000,                  // Cap delay at 5 seconds
+  baseDelay: 100,                  // Base delay in ms
+  maxDelay: 5000,                  // Cap at 5 seconds
   jitterFactor: 0.3,               // Add ±30% randomness
-  retryableStatuses: [409, 503],   // HTTP status codes to retry
-  retryableErrors: [               // Error codes to retry
-    'ECONNRESET',
-    'ETIMEDOUT',
-    'ECONNREFUSED',
-    'fetch failed'
-  ]
+  retryableStatuses: [409, 503],
+  retryableErrors: ['ECONNRESET', 'ETIMEDOUT', 'fetch failed']
 };
 ```
 
-**Race Condition Test Results:**
+### Production Test Results
 
-Based on production testing with concurrent updates:
-- **10 concurrent writers**: 100% success rate with 10 retries
-- **50 concurrent writers**: 100% success rate with 10 retries
-- **Average retries needed**: 1-2 per operation under high contention
-- **Max retries observed**: 6 retries (under extreme load with 50 writers)
-- **Performance**: Sub-second total time even with retries and backoff
-
-The server's automatic internal retry (up to 3 attempts) handles most races transparently. Client retries are only needed when the server's `expect_tip` check fails (client had stale tip).
+Based on testing with 50 concurrent writers:
+- **Success rate**: 100% with 10 retries
+- **Average retries**: 1-2 per operation
+- **Max retries observed**: 6 retries under extreme load
+- **Performance**: Sub-second even with retries
 
 ---
 
@@ -156,7 +115,7 @@ The server's automatic internal retry (up to 3 attempts) handles most races tran
 
 Returns service status.
 
-**Response:**
+**Response:** `200 OK`
 ```json
 {
   "service": "arke-ipfs-api",
@@ -167,83 +126,15 @@ Returns service status.
 
 ---
 
-### Initialize Arke Origin Block
+### File Operations
 
-**`POST /arke/init`**
-
-Initialize the Arke origin block (genesis entity) if it doesn't already exist. This is the root of the archive tree with a well-known PI.
-
-**Request:** No body required
-
-**Response:** `201 Created` (if created) or `200 OK` (if already exists)
-```json
-{
-  "message": "Arke origin block initialized",
-  "metadata_cid": "bafkreiabc123...",
-  "pi": "00000000000000000000000000",
-  "ver": 1,
-  "manifest_cid": "bafybeiabc789...",
-  "tip": "bafybeiabc789..."
-}
-```
-
-If already exists:
-```json
-{
-  "message": "Arke origin block already exists",
-  "pi": "00000000000000000000000000",
-  "ver": 2,
-  "ts": "2025-10-12T17:35:39.621Z",
-  "manifest_cid": "bafybeiabc789...",
-  "prev_cid": "bafybeiabc456...",
-  "components": {
-    "metadata": "bafkreiabc123..."
-  },
-  "children_pi": ["01K7..."],
-  "note": "..."
-}
-```
-
-**Side Effects:**
-- Creates Arke metadata JSON and stores in IPFS
-- Creates v1 manifest with well-known PI
-- Sets up `.tip` file in MFS
-- Appends to backend chain for indexing
-
-**Arke Metadata:**
-```json
-{
-  "name": "Arke",
-  "type": "root",
-  "description": "Origin block of the Arke Institute archive tree. Contains all institutional collections.",
-  "note": "Arke (ἀρχή) - Ancient Greek for 'origin' or 'beginning'"
-}
-```
-
-**Note:** The Arke PI is configurable via `ARKE_PI` environment variable (defaults to `00000000000000000000000000`).
-
----
-
-### Get Arke Origin Block
-
-**`GET /arke`**
-
-Convenience endpoint to fetch the Arke origin block without needing to know the PI.
-
-**Response:** `200 OK` (same format as `GET /entities/{pi}`)
-
-**Errors:**
-- `404` - Arke origin block not initialized (call `POST /arke/init` first)
-
----
-
-### Upload Files
+#### Upload Files
 
 **`POST /upload`**
 
-Upload raw bytes to IPFS. Returns CID(s) for use in manifest components.
+Upload raw files to IPFS. Returns CIDs for use in manifest components.
 
-**Request:** `multipart/form-data` with one or more file parts
+**Request:** `multipart/form-data` with one or more files
 
 **Response:** `200 OK`
 ```json
@@ -256,59 +147,70 @@ Upload raw bytes to IPFS. Returns CID(s) for use in manifest components.
 ]
 ```
 
-**Upload Size Limit:**
-
-The API has a **maximum upload size of 100 MB per request** due to Cloudflare Workers request body size constraints. This limit has been confirmed through production testing (see [UPLOAD_LIMITS_TEST_RESULTS.md](./UPLOAD_LIMITS_TEST_RESULTS.md)).
-
-**For files larger than 100 MB:**
-1. Upload directly to the Kubo instance via its HTTP API:
-   ```bash
-   curl -X POST -F "file=@large-file.bin" http://your-kubo-node:5001/api/v0/add
-   ```
-2. Use the returned CID in your manifest components as usual
-
-**Note:** Upload times scale roughly linearly with file size:
-- Small files (<10 MB): seconds
-- Medium files (50 MB): ~1 minute
-- Large files (90-99 MB): ~2-3 minutes
-
-**Errors:**
-- `400` - No files provided
-- `413` - File exceeds 100 MB limit
+**Upload Limits:**
+- Maximum: 100 MB per request (Cloudflare Workers constraint)
+- For larger files: Upload directly to Kubo and use the CID
 
 ---
 
-### Download File
+#### Download File Content
 
-**`GET /cat/{cid}`**
+**`GET /cat/:cid`**
 
-Download file content by CID. Streams bytes directly from IPFS.
+Download file content by CID.
 
 **Path Parameters:**
 - `cid` - IPFS CID (e.g., `bafybeiabc123...`)
 
-**Response:** `200 OK`
-- Content-Type: `application/octet-stream` (or detected type)
-- Headers:
-  - `Cache-Control: public, max-age=31536000, immutable`
-  - `X-IPFS-CID: {cid}`
+**Response:** Binary stream
+- `Content-Type`: Detected or `application/octet-stream`
+- `Cache-Control`: `public, max-age=31536000, immutable`
+- `X-IPFS-CID`: `{cid}`
 
 **Errors:**
-- `400` - Invalid CID format
-- `404` - Content not found in IPFS
+- `400` - Invalid CID
+- `404` - Content not found
 
 ---
 
-### List Entities
+#### Download DAG Node
+
+**`GET /dag/:cid`**
+
+Download IPLD DAG node as JSON (for manifests, properties, relationships).
+
+**Path Parameters:**
+- `cid` - IPFS CID of dag-json node
+
+**Response:** `200 OK`
+```json
+{
+  "schema": "arke/eidos@v1",
+  "id": "01J8ME3H6FZ3...",
+  "type": "PI",
+  "ver": 3,
+  ...
+}
+```
+
+**Errors:**
+- `400` - Invalid CID
+- `404` - DAG node not found
+
+---
+
+### Entity Operations
+
+#### List Entities
 
 **`GET /entities`**
 
-List entities with cursor-based pagination. Uses event-sourced backend with snapshots for scalable performance.
+List entities with cursor-based pagination.
 
 **Query Parameters:**
-- `cursor` - Pagination cursor (CID from previous page's `next_cursor`, optional)
-- `limit` - Max results per page (1-1000, default: 100)
-- `include_metadata` - Include full entity details (default: false)
+- `cursor` - Pagination cursor from `next_cursor` (optional)
+- `limit` - Results per page (1-1000, default: 100)
+- `include_metadata` - Include full details (default: false)
 
 **Response:** `200 OK`
 
@@ -317,7 +219,8 @@ Without metadata:
 {
   "entities": [
     {
-      "pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
+      "pi": "01J8ME3H6FZ3...",
+      "id": "01J8ME3H6FZ3...",
       "tip": "bafybeiabc789..."
     }
   ],
@@ -331,68 +234,62 @@ With `include_metadata=true`:
 {
   "entities": [
     {
-      "pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
+      "pi": "01J8ME3H6FZ3...",
+      "id": "01J8ME3H6FZ3...",
       "tip": "bafybeiabc789...",
+      "type": "PI",
+      "label": "Collection Name",
       "ver": 3,
       "ts": "2025-10-08T22:10:15Z",
-      "note": "Updated metadata",
       "component_count": 2,
       "children_count": 1
     }
   ],
   "limit": 100,
-  "next_cursor": "bafybeiabc789..."
+  "next_cursor": null
 }
 ```
 
-**Pagination:**
-- First page: `GET /entities?limit=100`
-- Next page: `GET /entities?limit=100&cursor={next_cursor}`
-- `next_cursor` is `null` when no more pages available
-- Cursor is an opaque CID returned by backend; do not construct manually
-
-**Performance:**
-- **Latest entities**: < 100ms (queries from snapshot)
-- **Deep pagination**: < 500ms (cursor-based navigation)
-- Sub-100ms queries regardless of total entity count
-- Scales to millions of entities without performance degradation
-
-**Implementation:**
-- Entity list queried from latest snapshot
-- Backend tracks all creates/updates via event stream
-- Periodic snapshots capture complete entity list with event checkpoint
-- Event stream enables incremental sync for mirroring clients
-
-**Errors:**
-- `400` - Invalid pagination params (limit not 1-1000 or invalid cursor format)
-- `503` - Backend API unavailable (temporary)
+**Note:** `next_cursor` is `null` when no more results.
 
 ---
 
-### Create Entity
+#### Create Entity
 
 **`POST /entities`**
 
-Create new entity with v1 manifest. Automatically appends entity to backend chain for indexing.
+Create new entity with v1 manifest.
 
 **Request:**
 ```json
 {
-  "pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",  // optional; server generates if omitted
+  "id": "01J8ME3H6FZ3...",
+  "type": "PI",
   "components": {
-    "metadata": "bafybeiabc123...",
+    "metadata": "bafkreiabc123...",
     "image": "bafybeiabc456..."
   },
-  "children_pi": ["01GX...", "01GZ..."],  // optional
-  "parent_pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",  // optional; auto-updates parent
-  "note": "Initial version"  // optional
+  "children_pi": ["01GX..."],
+  "hierarchy_parent": "01PARENT...",
+  "label": "Collection Name",
+  "description": "Description text",
+  "note": "Initial version"
 }
 ```
+
+**Fields:**
+- `id` - Optional; server generates ULID if omitted
+- `type` - Required; entity type (e.g., "PI", "Collection", "Document")
+- `components` - Required; at least 1 component
+- `hierarchy_parent` - Optional; parent entity ID (auto-updates parent)
+- `children_pi` - Optional; child entity IDs (manual linking required)
+- `label`, `description`, `note` - Optional metadata
 
 **Response:** `201 Created`
 ```json
 {
-  "pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
+  "id": "01J8ME3H6FZ3...",
+  "type": "PI",
   "ver": 1,
   "manifest_cid": "bafybeiabc789...",
   "tip": "bafybeiabc789..."
@@ -400,74 +297,44 @@ Create new entity with v1 manifest. Automatically appends entity to backend chai
 ```
 
 **Side Effects:**
-- Manifest stored in IPFS as dag-json
-- `.tip` file created in MFS for fast lookups
-- "create" event appended to backend event stream for tracking
-- Entity immediately appears in `/entities` listings
-- **If `parent_pi` provided:** Parent entity automatically updated with new child in `children_pi` array (creates new version)
-
-**Automatic Relationship Updates (One-Way Only):**
-
-The API provides **one-way automatic updates** for parent-child relationships:
-
-✅ **Child → Parent (Automatic):**
-- When creating an entity with `parent_pi`, the parent is automatically updated
-- Parent's `children_pi` array gets the new child appended (new version created)
-- Both child and parent are linked bidirectionally in ONE API call
-
-❌ **Parent → Children (Manual):**
-- When creating an entity with `children_pi`, children are NOT automatically updated
-- Children will NOT get `parent_pi` field set
-- You must use `POST /relations` after entity creation to establish bidirectional links
-
-**Best Practice for Nested Structures:**
-```javascript
-// 1. Create children first (no parent)
-const child1 = await POST('/entities', { components: {...} });
-const child2 = await POST('/entities', { components: {...} });
-
-// 2. Create parent (initially without children, or with children_pi but unlinked)
-const parent = await POST('/entities', { components: {...} });
-
-// 3. Use /relations to establish bidirectional links (handles multiple children)
-await POST('/relations', {
-  parent_pi: parent.pi,
-  expect_tip: parent.tip,
-  add_children: [child1.pi, child2.pi]  // Bulk operation
-});
-```
+- If `hierarchy_parent` provided: Parent automatically updated with new child
+- Entity added to backend event stream
+- Immediately appears in `/entities` listings
 
 **Errors:**
 - `400` - Invalid request body
-- `409` - PI already exists
-
-**Note:** Parent updates happen asynchronously and are logged if they fail. Entity creation succeeds even if parent update fails.
+- `409` - ID already exists
 
 ---
 
-### Get Entity
+#### Get Entity
 
-**`GET /entities/{pi}`**
+**`GET /entities/:id`**
 
 Fetch latest manifest for entity.
 
-**Query Parameters:**
-- `resolve` - `cids` (default) | `bytes` (future: stream component bytes)
+**Path Parameters:**
+- `id` - Entity identifier (ULID)
 
 **Response:** `200 OK`
 ```json
 {
-  "pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
+  "pi": "01J8ME3H6FZ3...",
+  "id": "01J8ME3H6FZ3...",
+  "type": "PI",
+  "created_at": "2025-10-08T21:00:00Z",
   "ver": 3,
   "ts": "2025-10-08T22:10:15Z",
   "manifest_cid": "bafybeiabc789...",
   "prev_cid": "bafybeiabc456...",
   "components": {
-    "metadata": "bafybeiabc123...",
+    "metadata": "bafkreiabc123...",
     "image": "bafybeiabc456..."
   },
+  "hierarchy_parent": "01PARENT...",
   "children_pi": ["01GX..."],
-  "parent_pi": "01J8PARENT...",  // optional: parent entity PI
+  "label": "Collection Name",
+  "description": "Description text",
   "note": "Updated metadata"
 }
 ```
@@ -477,55 +344,45 @@ Fetch latest manifest for entity.
 
 ---
 
-### Append Version
+#### Append Version
 
-**`POST /entities/{pi}/versions`**
+**`POST /entities/:id/versions`**
 
-Append new version (CAS-protected).
+Append new version to entity (CAS-protected).
 
 **Request:**
 ```json
 {
-  "expect_tip": "bafybeiabc789...",  // required for CAS
+  "expect_tip": "bafybeiabc789...",
   "components": {
-    "metadata": "bafybeinew123..."  // partial updates ok
+    "metadata": "bafybeinew123..."
   },
-  "components_remove": ["old-file.txt"],  // optional: remove component keys
+  "components_remove": ["old-file.txt"],
   "children_pi_add": ["01NEW..."],
   "children_pi_remove": ["01OLD..."],
+  "label": "Updated Name",
+  "description": "Updated description",
   "note": "Updated metadata"
 }
 ```
 
+**Fields:**
+- `expect_tip` - Required; current tip CID (CAS guard)
+- `components` - Optional; partial component updates
+- `components_remove` - Optional; component keys to remove
+- `children_pi_add` - Optional; children to add (max 100, auto-updates children)
+- `children_pi_remove` - Optional; children to remove (max 100, auto-updates children)
+- `label`, `description` - Optional; metadata updates
+- `note` - Optional; change description
+
 **Response:** `201 Created`
 ```json
 {
-  "pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
+  "id": "01J8ME3H6FZ3...",
+  "type": "PI",
   "ver": 4,
   "manifest_cid": "bafybeinew789...",
   "tip": "bafybeinew789..."
-}
-```
-
-**Component Removal:**
-The `components_remove` parameter allows removing component keys from the manifest:
-- **Array of strings:** List of component keys to remove from the manifest
-- **Validation:** All keys must exist in the current manifest (400 error if not found)
-- **Conflict checking:** Cannot remove and add the same key in one request (400 error)
-- **Processing order:** Removals are processed BEFORE additions
-- **Empty array:** Valid no-op operation
-- **Use case:** File reorganization - move files from parent to child entities without leaving duplicate references
-
-**Example - File Reorganization:**
-```json
-{
-  "expect_tip": "bafybeiabc789...",
-  "components_remove": ["file1.pdf", "file2.pdf"],  // Remove files moved to children
-  "components": {
-    "description.txt": "bafybeidesc..."  // Add reorganization note
-  },
-  "children_pi_add": ["01GROUP1", "01GROUP2"],
-  "note": "Reorganized files into groups"
 }
 ```
 
@@ -534,32 +391,29 @@ The `components_remove` parameter allows removing component keys from the manife
 2. Add/update components (from `components`)
 3. Remove children (from `children_pi_remove`)
 4. Add children (from `children_pi_add`)
+5. Update label/description if provided
 
-**Bidirectional Relationships:**
-When using `children_pi_add` or `children_pi_remove`, the API automatically maintains bidirectional relationships:
-- **Adding children:** Each child entity is automatically updated with `parent_pi` set to this entity's PI (bulk operation supported)
-- **Removing children:** Each removed child entity has its `parent_pi` field cleared (bulk operation supported)
-- All affected entities get new versions with descriptive notes
-- Arrays can contain multiple children for bulk updates
-- Children are processed **in parallel batches of 10** for optimal performance and stability
-- **Maximum limit: 100 children per array** (enforced)
+**Child Processing:**
+- Children processed in parallel batches of 10
+- Maximum 100 children per request
+- Auto-updates child's `hierarchy_parent` field
 
 **Errors:**
-- `400` - Invalid request body (including exceeding 100-child limit, non-existent component key in `components_remove`, or same key in both `components` and `components_remove`)
+- `400` - Invalid request (>100 children, invalid component key, etc.)
 - `404` - Entity not found
 - `409` - CAS failure (tip changed)
 
 ---
 
-### List Versions
+#### List Versions
 
-**`GET /entities/{pi}/versions`**
+**`GET /entities/:id/versions`**
 
 List version history (newest first).
 
 **Query Parameters:**
-- `limit` - Max items (1-1000, default 50)
-- `cursor` - Pagination cursor (manifest CID)
+- `limit` - Max items (1-1000, default: 50)
+- `cursor` - Pagination cursor (manifest CID, optional)
 
 **Response:** `200 OK`
 ```json
@@ -577,7 +431,7 @@ List version history (newest first).
       "ts": "2025-10-08T22:10:15Z"
     }
   ],
-  "next_cursor": "bafybeiabc456..."  // null if no more
+  "next_cursor": "bafybeiabc456..."
 }
 ```
 
@@ -587,17 +441,21 @@ List version history (newest first).
 
 ---
 
-### Get Specific Version
+#### Get Specific Version
 
-**`GET /entities/{pi}/versions/{selector}`**
+**`GET /entities/:id/versions/:selector`**
 
-Fetch specific version by `cid:<CID>` or `ver:<N>`.
+Fetch specific version by CID or version number.
+
+**Path Parameters:**
+- `id` - Entity identifier
+- `selector` - `cid:<CID>` or `ver:<N>`
 
 **Examples:**
 - `/entities/01J8.../versions/cid:bafybeiabc123...`
 - `/entities/01J8.../versions/ver:2`
 
-**Response:** `200 OK` (same format as GET /entities/{pi})
+**Response:** `200 OK` (same format as GET /entities/:id)
 
 **Errors:**
 - `400` - Invalid selector
@@ -605,96 +463,167 @@ Fetch specific version by `cid:<CID>` or `ver:<N>`.
 
 ---
 
-### Update Relations
+### Hierarchy Operations
 
-**`POST /relations`**
+#### Update Hierarchy
 
-Update parent-child relationships with **automatic bidirectional linking**. This is the recommended way to establish parent-child relationships for bulk operations.
+**`POST /hierarchy`**
+
+Update parent-child hierarchy relationships (replaces deprecated `/relations`).
 
 **Request:**
 ```json
 {
-  "parent_pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
+  "parent_pi": "01J8ME3H6FZ3...",
   "expect_tip": "bafybeiabc789...",
-  "add_children": ["01NEW1...", "01NEW2...", "01NEW3..."],  // Bulk: array of children
+  "add_children": ["01NEW1...", "01NEW2...", "01NEW3..."],
   "remove_children": ["01OLD..."],
   "note": "Linked new items"
 }
 ```
 
-**Response:** `201 Created` (same format as append version)
-
-**Bidirectional Relationships (Automatic):**
-This endpoint automatically maintains bidirectional relationships for ALL children in the arrays:
-- **Adding children:** Each child entity is automatically updated with `parent_pi` set to parent's PI (creates new child version)
-- **Removing children:** Each removed child entity has its `parent_pi` field cleared (creates new child version)
-- Parent's `parent_pi` field is preserved across updates
-- All affected entities get new versions with descriptive notes
-- **Supports bulk operations:** Pass arrays with multiple children
-
-**Processing:**
-- Children are processed **in parallel batches** of 10 for optimal performance and stability
-- Batching prevents overwhelming Cloudflare Workers with too many concurrent requests
-- Each batch of 10 children processes in parallel, then moves to the next batch
-- Typical performance: ~500-700ms for 10 children, ~2-3s for 50 children, ~5-6s for 100 children
-- **Maximum limit: 100 children per request** (enforced)
-- For batches over 100, split into multiple sequential API calls
-
-**Errors:**
-- `400` - Invalid request body (including exceeding 100-child limit)
-- `404` - Parent not found
-- `409` - CAS failure
-
-**Example Error (exceeding limit):**
-```json
-{
-  "error": "VALIDATION_ERROR",
-  "message": "Cannot add 150 children in one request. Maximum is 100. Please split into multiple requests."
-}
-```
-
-**Use Cases:**
-- Establishing relationships after creating entities separately
-- Adding multiple files to a folder in one operation
-- Reorganizing hierarchies (remove from one parent, add to another)
-
----
-
-### Resolve PI to Tip
-
-**`GET /resolve/{pi}`**
-
-Fast lookup: PI → tip CID (no manifest fetch).
+**Fields:**
+- `parent_pi` - Required; parent entity ID
+- `expect_tip` - Required; current parent tip (CAS guard)
+- `add_children` - Optional; children to add (max 100)
+- `remove_children` - Optional; children to remove (max 100)
+- `note` - Optional; change description
 
 **Response:** `200 OK`
 ```json
 {
-  "pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
-  "tip": "bafybeiabc789..."
+  "parent_pi": "01J8ME3H6FZ3...",
+  "parent_ver": 4,
+  "parent_tip": "bafybeinew789...",
+  "children_updated": 3,
+  "children_failed": 0
 }
 ```
 
+**Processing:**
+- Updates parent's `children_pi` array
+- Auto-updates each child's `hierarchy_parent` field
+- Processes children in parallel batches of 10
+- Maximum 100 children per request
+
 **Errors:**
-- `404` - Entity not found
+- `400` - Invalid request (>100 children)
+- `404` - Parent not found
+- `409` - CAS failure
+
+**Note:** For semantic relationships (e.g., "extracted_from"), use the `relationships` component instead.
 
 ---
 
-### Migrate Entity to Eidos Schema
+### Merge Operations
 
-**`POST /migrate/{pi}`**
+#### Merge Entities
 
-Migrate a single entity from legacy schema (`arke/manifest@v1` or `arke/entity@v1`) to the unified `arke/eidos@v1` schema.
+**`POST /entities/:sourceId/merge`**
+
+Merge source entity into target entity.
 
 **Path Parameters:**
-- `pi` - Entity persistent identifier
+- `sourceId` - Entity to merge (will become tombstone)
 
-**Response:** `200 OK` (if migrated or already on eidos)
+**Request:**
+```json
+{
+  "target_id": "01TARGET...",
+  "expect_target_tip": "bafybeiabc789...",
+  "note": "Duplicate entry"
+}
+```
+
+**Response:** `201 Created`
+```json
+{
+  "source_id": "01SOURCE...",
+  "target_id": "01TARGET...",
+  "target_ver": 5,
+  "target_tip": "bafybeinew789...",
+  "tombstone_cid": "bafybeitomb..."
+}
+```
+
+**Merge Process:**
+1. Validates both entities are active (not already merged)
+2. Merges components using smart merge rules:
+   - **Properties**: Union of both
+   - **Relationships**: Concatenate both
+   - **Files**: Target wins on conflicts
+3. Updates target: adds merged components, increments version
+4. Creates tombstone for source (`arke/eidos-merged@v1` schema)
+5. Adds source ID to target's `merged_entities` array
+
+**Errors:**
+- `400` - Source or target already merged
+- `404` - Entity not found
+- `409` - CAS failure
+
+---
+
+#### Unmerge Entity
+
+**`POST /entities/:sourceId/unmerge`**
+
+Restore a previously merged entity.
+
+**Path Parameters:**
+- `sourceId` - Entity to restore
+
+**Request:**
+```json
+{
+  "target_id": "01TARGET...",
+  "expect_target_tip": "bafybeiabc789...",
+  "note": "Restore incorrect merge"
+}
+```
+
+**Response:** `201 Created`
+```json
+{
+  "source_id": "01SOURCE...",
+  "source_ver": 2,
+  "source_tip": "bafybeinew456...",
+  "target_id": "01TARGET...",
+  "target_ver": 6,
+  "target_tip": "bafybeinew789..."
+}
+```
+
+**Unmerge Process:**
+1. Validates source is tombstone, target is active
+2. Restores source from tombstone data
+3. Removes source ID from target's `merged_entities` array
+4. Creates new versions for both entities
+
+**Errors:**
+- `400` - Source not merged or wrong target
+- `404` - Entity not found
+- `409` - CAS failure
+
+---
+
+### Migration Operations
+
+#### Migrate Single Entity
+
+**`POST /migrate/:id`**
+
+Migrate entity from legacy schema to `arke/eidos@v1`.
+
+**Path Parameters:**
+- `id` - Entity identifier
+
+**Response:** `200 OK`
 
 Already migrated:
 ```json
 {
   "message": "Entity already migrated",
-  "pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
+  "pi": "01J8ME3H6FZ3...",
   "schema": "arke/eidos@v1",
   "ver": 3
 }
@@ -704,7 +633,7 @@ Successfully migrated:
 ```json
 {
   "message": "Entity migrated successfully",
-  "pi": "01J8ME3H6FZ3KQ5W1P2XY8K7E5",
+  "pi": "01J8ME3H6FZ3...",
   "old_schema": "arke/manifest@v1",
   "new_schema": "arke/eidos@v1",
   "old_tip": "bafybeiabc123...",
@@ -715,26 +644,26 @@ Successfully migrated:
 ```
 
 **Migration Process:**
-1. Reads current manifest from tip
-2. Checks if already on `arke/eidos@v1` (returns success if so)
+1. Reads current manifest
+2. Checks if already `arke/eidos@v1` (returns success)
 3. Validates old schema is `arke/manifest@v1` or `arke/entity@v1`
-4. Walks version history to v1 to get `created_at` timestamp
-5. Creates new manifest with eidos schema, preserving all data
-6. Updates tip to point to new manifest
+4. Walks version chain to v1 for `created_at` timestamp
+5. Creates new manifest with eidos schema
+6. Updates tip to new manifest
+
+**Note:** Preserves all version history via `prev` links.
 
 **Errors:**
 - `404` - Entity not found
-- `400` - Unsupported schema (not a legacy schema)
-
-**Note:** Migration preserves all version history. The new manifest links to old manifest via `prev` field.
+- `400` - Unsupported schema
 
 ---
 
-### Migrate Batch of Entities
+#### Migrate Batch
 
 **`POST /migrate/batch`**
 
-Migrate multiple entities in one request (up to 100).
+Migrate multiple entities in one request.
 
 **Request:**
 ```json
@@ -744,9 +673,9 @@ Migrate multiple entities in one request (up to 100).
 }
 ```
 
-**Parameters:**
-- `pis` - Array of entity PIs (required, 1-100 entities)
-- `dry_run` - If true, preview migration without applying changes (default: false)
+**Fields:**
+- `pis` - Required; array of 1-100 entity IDs
+- `dry_run` - Optional; preview without applying (default: false)
 
 **Response:** `200 OK`
 ```json
@@ -772,11 +701,6 @@ Migrate multiple entities in one request (up to 100).
     {
       "pi": "01K75HQQXNT...",
       "status": "already_migrated"
-    },
-    {
-      "pi": "01FAILED123...",
-      "status": "failed",
-      "error": "Migration error message"
     }
   ]
 }
@@ -785,17 +709,81 @@ Migrate multiple entities in one request (up to 100).
 **Status Values:**
 - `migrated` - Successfully migrated
 - `already_migrated` - Already on arke/eidos@v1
-- `would_migrate` - Would be migrated (dry_run=true only)
+- `would_migrate` - Would migrate (dry_run only)
 - `failed` - Migration failed (see error field)
-- `not_found` - Entity does not exist
-- `unsupported_schema` - Schema cannot be migrated
+- `not_found` - Entity doesn't exist
+- `unsupported_schema` - Schema not migratable
 
 **Errors:**
-- `400` - Invalid request (empty array, >100 entities)
+- `400` - Invalid request (empty, >100 entities)
 
-**Performance:**
-- Processes entities sequentially to avoid overwhelming IPFS
-- Typically 100 entities in ~10 seconds
+---
+
+### Utility Operations
+
+#### Resolve ID to Tip
+
+**`GET /resolve/:id`**
+
+Fast lookup: entity ID → tip CID (no manifest fetch).
+
+**Path Parameters:**
+- `id` - Entity identifier
+
+**Response:** `200 OK`
+```json
+{
+  "pi": "01J8ME3H6FZ3...",
+  "id": "01J8ME3H6FZ3...",
+  "tip": "bafybeiabc789..."
+}
+```
+
+**Errors:**
+- `404` - Entity not found
+
+---
+
+### Arke Origin Block
+
+#### Initialize Arke
+
+**`POST /arke/init`**
+
+Initialize Arke origin block (genesis entity) if it doesn't exist.
+
+**Request:** No body required
+
+**Response:** `201 Created` (if created) or `200 OK` (if exists)
+```json
+{
+  "message": "Arke origin block initialized",
+  "metadata_cid": "bafkreiabc123...",
+  "id": "00000000000000000000000000",
+  "type": "PI",
+  "ver": 1,
+  "manifest_cid": "bafybeiabc789...",
+  "tip": "bafybeiabc789..."
+}
+```
+
+**Side Effects:**
+- Creates Arke metadata JSON
+- Creates v1 manifest with well-known ID
+- Sets up `.tip` file in MFS
+
+---
+
+#### Get Arke
+
+**`GET /arke`**
+
+Convenience endpoint for Arke origin block.
+
+**Response:** `200 OK` (same format as GET /entities/:id)
+
+**Errors:**
+- `404` - Arke not initialized (call POST /arke/init)
 
 ---
 
@@ -806,28 +794,47 @@ All errors return JSON:
 {
   "error": "ERROR_CODE",
   "message": "Human-readable message",
-  "details": {}  // optional
+  "details": {}
 }
 ```
 
 **Error Codes:**
-- `VALIDATION_ERROR` (400)
-- `INVALID_PARAMS` (400)
-- `INVALID_CURSOR` (400)
-- `NOT_FOUND` (404)
-- `CONFLICT` (409) - PI exists or CAS failure
-- `CAS_FAILURE` (409) - Specific CAS error with actual/expected tips
+- `VALIDATION_ERROR` (400) - Invalid request body
+- `INVALID_PARAMS` (400) - Invalid query parameters
+- `INVALID_CURSOR` (400) - Invalid pagination cursor
+- `NOT_FOUND` (404) - Entity not found
+- `CONFLICT` (409) - ID already exists
+- `CAS_FAILURE` (409) - Tip changed (includes actual/expected)
 - `BACKEND_ERROR` (503) - Backend API unavailable
-- `IPFS_ERROR` (503)
-- `INTERNAL_ERROR` (500)
+- `IPFS_ERROR` (503) - IPFS operation failed
+- `INTERNAL_ERROR` (500) - Server error
+
+---
+
+## Network Isolation (Testnet)
+
+The API supports separate test and main networks.
+
+**Network Header:** `X-Arke-Network: main` (default) or `test`
+
+**PI Prefix Convention:**
+- **Main network**: Standard ULIDs (e.g., `01K75HQQ...`)
+- **Test network**: Prefix with `II` (e.g., `IIAK75HQQ...`)
+
+**Cross-Network Prevention:**
+All endpoints validate PI matches requested network. Cannot mix test and main entities.
+
+**MFS Paths:**
+- Main: `/arke/index/{shard1}/{shard2}/{id}.tip`
+- Test: `/arke/test/index/{shard1}/{shard2}/{id}.tip`
 
 ---
 
 ## Data Model
 
-### Manifest (dag-json)
+### Eidos Manifest (dag-json)
 
-Current schema: **`arke/eidos@v1`** (unified entity schema)
+Current schema: **`arke/eidos@v1`**
 
 ```json
 {
@@ -837,122 +844,56 @@ Current schema: **`arke/eidos@v1`** (unified entity schema)
   "created_at": "2025-10-08T21:00:00Z",
   "ver": 3,
   "ts": "2025-10-08T22:10:15Z",
-  "prev": { "/": "bafybeiprev..." },  // IPLD link to previous version
+  "prev": { "/": "bafybeiprev..." },
   "components": {
     "metadata": { "/": "bafybeimeta..." },
     "image": { "/": "bafybeiimg..." }
   },
-  "children_pi": ["01GX...", "01GZ..."],  // optional: child entities
-  "parent_pi": "01J8PARENT...",  // optional: parent entity (for bidirectional traversal)
-  "label": "Collection Name",  // optional: display name
-  "description": "Brief description",  // optional: human-readable description
-  "note": "Optional change note"
+  "hierarchy_parent": "01PARENT...",
+  "children_pi": ["01GX...", "01GZ..."],
+  "merged_entities": ["01MERGED1...", "01MERGED2..."],
+  "label": "Collection Name",
+  "description": "Brief description",
+  "note": "Updated metadata"
 }
 ```
 
-**Schema Fields:**
-- `schema`: Always `"arke/eidos@v1"` (current unified schema)
-- `id`: Entity identifier (ULID, same as historical `pi` field)
-- `type`: Entity type (e.g., `"PI"`, `"Collection"`, `"Document"`)
-- `created_at`: ISO 8601 timestamp of version 1 (immutable across versions)
-- `ver`: Version number (1, 2, 3, ...)
-- `ts`: ISO 8601 timestamp of this version
-- `prev`: IPLD link to previous version manifest (null for v1)
-- `components`: Map of component labels to IPLD CID links
-- `children_pi`: Optional array of child entity IDs
-- `parent_pi`: Optional parent entity ID (for bidirectional traversal)
-- `label`: Optional display name for UI
-- `description`: Optional human-readable description
-- `note`: Optional change description for this version
+### Merged Tombstone (dag-json)
 
-**Bidirectional Relationships:**
-- `children_pi`: Array of child entity IDs (parent → children navigation)
-- `parent_pi`: Single parent entity ID (child → parent navigation)
-- Automatically maintained by the API when using `parent_pi` in entity creation or relationship endpoints
-- Enables efficient graph traversal in both directions
+Schema: **`arke/eidos-merged@v1`**
 
-**Schema History:**
-- `arke/eidos@v1` (current) - Unified schema supporting all entity types
-- `arke/entity@v1` (legacy) - Previous schema for typed entities
-- `arke/manifest@v1` (legacy) - Original schema for PI entities
+```json
+{
+  "schema": "arke/eidos-merged@v1",
+  "id": "01SOURCE123...",
+  "type": "PI",
+  "created_at": "2025-10-08T21:00:00Z",
+  "merged_into": "01TARGET456...",
+  "merged_at": "2025-10-09T15:30:00Z",
+  "prev": { "/": "bafybeilast..." },
+  "note": "Merged - duplicate entry"
+}
+```
 
-All entities have been migrated to `arke/eidos@v1`. Legacy schemas are preserved in version history.
+### Tip File (MFS)
 
-### Tip (MFS)
+**Path:** `/arke/index/{shard1}/{shard2}/{id}.tip`
 
-Path: `/arke/index/<shard2[0]>/<shard2[1]>/<PI>.tip`
+**Sharding:** Last 4 chars of ULID for uniform distribution
+- `01K75HQQXNTDG7BBP7PS9AWYAN` → `AW/YA/`
 
-Content: `<manifest_cid>\n`
+**Content:** Single line with tip CID
+```
+bafybeiabc789...
+```
 
 ---
 
-## ULID Format
+## Schema History
 
-PIs are ULIDs: 26-character base32 (Crockford alphabet), e.g., `01J8ME3H6FZ3KQ5W1P2XY8K7E5`
+- **`arke/eidos@v1`** (current) - Unified schema for all entities
+- **`arke/eidos-merged@v1`** (current) - Tombstone for merged entities
+- **`arke/entity@v1`** (legacy) - Previous typed entity schema
+- **`arke/manifest@v1`** (legacy) - Original PI entity schema
 
-Regex: `^[0-9A-HJKMNP-TV-Z]{26}$`
-
----
-
-## CID Format
-
-All CIDs are CIDv1 (base32), e.g., `bafybeiabc123...`
-
----
-
-## Backend Architecture
-
-### Event Stream + Snapshot System
-
-The API delegates entity indexing to an IPFS Server backend (FastAPI) that manages an event-sourced data structure:
-
-**Components:**
-1. **Event Stream** - Time-ordered log of all creates and updates
-   - Stored as dag-json event entries in IPFS
-   - Each event links to previous via `prev` field
-   - Tracks both entity **creation** and **version updates**
-   - Events include: `type` (create/update), `pi`, `ver`, `tip_cid`, `ts`
-   - Enables complete change history and mirroring
-
-2. **Snapshots** - Point-in-time entity index with event checkpoints
-   - Periodic snapshots of all entities
-   - Each snapshot includes `event_cid` checkpoint for incremental sync
-   - Stored as dag-json with entity list
-   - Enables efficient bulk mirroring and recovery
-
-3. **Index Pointer** - Single source of truth
-   - Stored in MFS at `/arke/index-pointer`
-   - Tracks current snapshot CID and event stream head
-   - Maintains total entity and event counts
-
-**Query Strategy:**
-- **GET /entities**: Returns paginated entity list from latest snapshot
-- **GET /events**: Returns time-ordered event stream for change tracking
-- **GET /snapshot/latest**: Returns complete snapshot with event checkpoint
-
-**Lifecycle:**
-1. Entity created → Append "create" event to stream
-2. Version added → Append "update" event to stream
-3. Periodic snapshots capture current state + event checkpoint
-4. Clients can sync incrementally from checkpoint to head
-
-**Event Types:**
-- **create**: New entity added to system (ver typically 1)
-- **update**: Existing entity received new version (ver > 1)
-
-**Performance Benefits:**
-- No MFS directory traversal (was O(n) with n=40K+ entities)
-- Sub-100ms queries regardless of total entity count
-- Event stream enables efficient mirroring and change tracking
-- Scales to millions of entities and events
-
-**Environment Variables:**
-- `IPFS_SERVER_API_URL` - Backend API endpoint (e.g., `http://localhost:3000`)
-
-**Backend Endpoints Used:**
-- `POST /events/append` - Append create/update event to stream
-- `GET /entities?limit=N&cursor=C` - Query entities with pagination
-- `GET /events?limit=N&cursor=C` - Query event stream
-- `GET /snapshot/latest` - Get latest snapshot with checkpoint
-
-See `BACKEND_API_WALKTHROUGH.md` for complete backend architecture and event stream details.
+All 3,285 entities migrated to `arke/eidos@v1`. Legacy schemas preserved in version history.
