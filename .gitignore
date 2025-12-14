@@ -37,3 +37,4 @@ coverage/
 # Test data
 VJ_Day_Hickam_Aug_1995/
 cheimarros.json
+scripts/migrations/.migration-progress.json

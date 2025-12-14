@@ -25,6 +25,7 @@ import { updateRelationsHandler, updateHierarchyHandler } from './handlers/relat
 import { mergeEntityHandler, unmergeEntityHandler } from './handlers/merge';
 import { resolveHandler } from './handlers/resolve';
 import { downloadHandler, dagDownloadHandler } from './handlers/download';
+import { migrateEntityHandler, migrateBatchHandler } from './handlers/migrate';
 
 const app = new Hono<HonoEnv>();
 
@@ -128,6 +129,12 @@ app.post('/relations', updateRelationsHandler);
 
 // GET /resolve/:pi
 app.get('/resolve/:pi', resolveHandler);
+
+// POST /migrate/batch - Migrate multiple entities (must be before /:pi route)
+app.post('/migrate/batch', migrateBatchHandler);
+
+// POST /migrate/:pi - Migrate entity from old schema to arke/eidos@v1
+app.post('/migrate/:pi', migrateEntityHandler);
 
 // POST /arke/init - Initialize Arke origin block if it doesn't exist
 // Note: Arke origin block always uses main network (ARKE_PI starts with '00', not 'II')
