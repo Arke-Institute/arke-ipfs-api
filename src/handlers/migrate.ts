@@ -109,7 +109,6 @@ export async function migrateEntityHandler(c: Context): Promise<Response> {
     if (manifest.schema === 'arke/eidos@v1') {
       return c.json({
         message: 'Entity already migrated',
-        pi: id,
         id,
         schema: 'arke/eidos@v1',
         ver: manifest.ver,
@@ -148,7 +147,6 @@ export async function migrateEntityHandler(c: Context): Promise<Response> {
 
     return c.json({
       message: 'Entity migrated successfully',
-      pi: id,
       id,
       old_schema: manifest.schema,
       new_schema: 'arke/eidos@v1',

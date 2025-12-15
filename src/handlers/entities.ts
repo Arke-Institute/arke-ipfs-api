@@ -135,7 +135,6 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
       return true;
     })
     .map((event) => ({
-      pi: event.pi,
       id: event.pi,
       tip: event.tip_cid,
     }));
@@ -145,10 +144,9 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
   if (includeMetadata) {
     console.log(`[HANDLER] Fetching metadata for ${baseEntities.length} entities...`);
     entities = await Promise.all(
-      baseEntities.map(async ({ pi, id, tip }) => {
+      baseEntities.map(async ({ id, tip }) => {
         const manifest = (await ipfs.dagGet(tip)) as Eidos;
         return {
-          pi,
           id,
           tip,
           type: manifest.type,
@@ -162,7 +160,7 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
       })
     );
   } else {
-    // Just return PI, ID and tip CID
+    // Just return ID and tip CID
     entities = baseEntities;
   }
 

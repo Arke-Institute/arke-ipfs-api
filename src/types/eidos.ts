@@ -153,9 +153,6 @@ export function toLightweight(manifest: Eidos): LightweightEntity {
 
 // Create Entity Request
 export const CreateEntityRequestSchema = z.object({
-  // Backward compatibility
-  pi: EntityIdSchema.optional(), // DEPRECATED: use "id" instead
-
   id: EntityIdSchema.optional(), // Server generates if omitted
   type: z.string().min(1).optional(), // Defaults to "PI" if omitted (backward compat)
   label: z.string().optional(),
@@ -192,7 +189,6 @@ export const CreateEntityRequestSchema = z.object({
 export type CreateEntityRequest = z.infer<typeof CreateEntityRequestSchema>;
 
 export interface CreateEntityResponse {
-  pi: string; // DEPRECATED (for backward compat)
   id: string;
   type: string;
   ver: number;
@@ -238,7 +234,6 @@ export const AppendVersionRequestSchema = z.object({
 export type AppendVersionRequest = z.infer<typeof AppendVersionRequestSchema>;
 
 export interface AppendVersionResponse {
-  pi: string; // DEPRECATED (for backward compat)
   id: string;
   type: string;
   ver: number;
@@ -248,7 +243,6 @@ export interface AppendVersionResponse {
 
 // Get Entity Response
 export interface GetEntityResponse {
-  pi: string; // DEPRECATED (for backward compat)
   id: string;
   type: string;
   created_at: string;
@@ -272,7 +266,6 @@ export interface GetEntityResponse {
 
 // Merged entity redirect response
 export interface GetEntityMergedResponse {
-  pi: string; // DEPRECATED (for backward compat)
   id: string;
   type: string;
   manifest_cid: string; // CID of the tombstone manifest
@@ -341,7 +334,6 @@ export interface DeleteEntityResponse {
 
 // Get Deleted Entity Response
 export interface GetEntityDeletedResponse {
-  pi: string; // DEPRECATED (backward compat)
   id: string;
   type: string;
   manifest_cid: string;
@@ -388,7 +380,6 @@ export interface ListEntitiesResponse {
 }
 
 export interface EntityListItem {
-  pi: string; // DEPRECATED (for backward compat)
   id: string;
   tip: string;
   type?: string; // (if include_metadata)
@@ -414,7 +405,6 @@ export interface ListVersionsResponse {
 
 // Resolve Response
 export interface ResolveResponse {
-  pi: string; // DEPRECATED (for backward compat)
   id: string;
   tip: string;
 }

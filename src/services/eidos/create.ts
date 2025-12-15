@@ -36,12 +36,11 @@ export async function createEntity(
   // STEP 1: GENERATE OR VALIDATE ID
   // ==========================================================================
   let id: string;
-  if (req.id || req.pi) {
+  if (req.id) {
     // Client-provided ID: validate format and network match
-    const providedId = req.id || req.pi!;
-    assertValidPi(providedId, network, 'id');
-    validatePiMatchesNetwork(providedId, network);
-    id = providedId;
+    assertValidPi(req.id, network, 'id');
+    validatePiMatchesNetwork(req.id, network);
+    id = req.id;
   } else {
     // Server-generated ID for the appropriate network
     id = generatePi(network);
@@ -227,7 +226,6 @@ export async function createEntity(
   // STEP 12: RETURN RESPONSE
   // ==========================================================================
   return {
-    pi: id, // DEPRECATED: for backward compatibility
     id,
     type,
     ver: 1,

@@ -159,7 +159,6 @@ export async function appendVersion(
   // STEP 9: RETURN RESPONSE
   // ==========================================================================
   return {
-    pi: id, // DEPRECATED: backward compatibility
     id,
     type: newManifest.type,
     ver: newManifest.ver,

@@ -21,7 +21,6 @@ export async function resolveHandler(c: Context): Promise<Response> {
   const tipCid = await tipSvc.readTip(id);
 
   const response: ResolveResponse = {
-    pi: id, // Backward compatibility
     id,
     tip: tipCid,
   };

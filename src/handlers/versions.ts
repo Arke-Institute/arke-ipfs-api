@@ -355,7 +355,6 @@ export async function getVersionHandler(c: Context): Promise<Response> {
 
   // Transform to response format
   const response: GetEntityResponse = {
-    pi: entityId, // Backward compatibility
     id: entityId,
     type: entityType,
     created_at: manifest.created_at || manifest.ts, // Eidos has created_at, fallback to ts for old schema

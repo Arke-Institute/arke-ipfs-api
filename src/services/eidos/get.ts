@@ -46,7 +46,6 @@ export async function getEntity(
 
     // Otherwise return redirect info
     return {
-      pi: id, // DEPRECATED: backward compatibility
       id,
       type: merged.type,
       manifest_cid: tipCid,
@@ -64,7 +63,6 @@ export async function getEntity(
     const deleted = manifest as EidosDeleted;
 
     return {
-      pi: id, // DEPRECATED
       id,
       type: deleted.type,
       manifest_cid: tipCid,
@@ -87,7 +85,6 @@ export async function getEntity(
 
   // Return full entity
   return {
-    pi: id, // DEPRECATED: backward compatibility
     id: entity.id,
     type: entity.type,
     created_at: entity.created_at,
