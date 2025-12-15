@@ -194,6 +194,7 @@ export type CreateEntityRequest = z.infer<typeof CreateEntityRequestSchema>;
 export interface CreateEntityResponse {
   pi: string; // DEPRECATED (for backward compat)
   id: string;
+  type: string;
   ver: number;
   manifest_cid: string;
   tip: string;
@@ -239,6 +240,7 @@ export type AppendVersionRequest = z.infer<typeof AppendVersionRequestSchema>;
 export interface AppendVersionResponse {
   pi: string; // DEPRECATED (for backward compat)
   id: string;
+  type: string;
   ver: number;
   manifest_cid: string;
   tip: string;
@@ -249,6 +251,7 @@ export interface GetEntityResponse {
   pi: string; // DEPRECATED (for backward compat)
   id: string;
   type: string;
+  created_at: string;
   label?: string;
   description?: string;
   ver: number;
@@ -284,6 +287,7 @@ export const MergeEntityRequestSchema = z.object({
   target_id: EntityIdSchema, // Entity to merge into
   expect_target_tip: z.string().min(1), // CAS guard for target entity
   note: z.string().optional(),
+  skip_sync: z.boolean().optional(), // Skip index-sync callback (for internal use)
 });
 
 export type MergeEntityRequest = z.infer<typeof MergeEntityRequestSchema>;
@@ -302,6 +306,7 @@ export const UnmergeEntityRequestSchema = z.object({
   target_id: EntityIdSchema, // Entity it was merged into
   expect_target_tip: z.string().min(1), // CAS guard for target entity
   note: z.string().optional(),
+  skip_sync: z.boolean().optional(), // Skip index-sync callback (for internal use)
 });
 
 export type UnmergeEntityRequest = z.infer<typeof UnmergeEntityRequestSchema>;

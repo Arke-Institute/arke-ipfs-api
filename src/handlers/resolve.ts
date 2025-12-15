@@ -1,6 +1,6 @@
 import { Context } from 'hono';
 import { TipService } from '../services/tip';
-import type { ResolveResponse } from '../types/manifest';
+import type { ResolveResponse } from '../types/eidos';
 import { Network, validatePiMatchesNetwork } from '../types/network';
 
 /**
@@ -12,16 +12,17 @@ export async function resolveHandler(c: Context): Promise<Response> {
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
 
-  const pi = c.req.param('pi');
+  const id = c.req.param('id');
 
-  // Validate PI matches the requested network
-  validatePiMatchesNetwork(pi, network);
+  // Validate ID matches the requested network
+  validatePiMatchesNetwork(id, network);
 
   // Read tip CID
-  const tipCid = await tipSvc.readTip(pi);
+  const tipCid = await tipSvc.readTip(id);
 
   const response: ResolveResponse = {
-    pi,
+    pi: id, // Backward compatibility
+    id,
     tip: tipCid,
   };
 

@@ -5,6 +5,7 @@ import { validateBody } from '../utils/validation';
 import { deleteEntity } from '../services/eidos/delete';
 import { DeleteEntityRequestSchema } from '../types/eidos';
 import { Network, validatePiMatchesNetwork } from '../types/network';
+import { syncEidos } from '../services/sync';
 
 /**
  * POST /entities/:id/delete
@@ -25,15 +26,14 @@ export async function deleteEntityHandler(c: Context): Promise<Response> {
   // Delete entity (creates tombstone)
   const response = await deleteEntity(ipfs, tipSvc, entityId, body);
 
-  // TODO: Backend sync (if needed in future)
-  // Fire-and-forget sync to index-sync service:
-  // c.executionCtx.waitUntil(
-  //   syncEntity(c.env, {
-  //     entity_id: entityId,
-  //     network,
-  //     event: 'deleted',
-  //   })
-  // );
+  // Fire-and-forget sync to index-sync service
+  c.executionCtx.waitUntil(
+    syncEidos(c.env, {
+      id: entityId,
+      network,
+      event: 'deleted',
+    })
+  );
 
   return c.json(response, 201);
 }

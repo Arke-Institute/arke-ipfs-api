@@ -1,7 +1,7 @@
 import { Context } from 'hono';
 import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
-import { syncPI } from '../services/sync';
+import { syncEidos } from '../services/sync';
 import { CASError, ValidationError, TipWriteRaceError } from '../utils/errors';
 import { validateCIDRecord } from '../utils/cid';
 import {
@@ -47,16 +47,16 @@ export async function appendVersionHandler(c: Context<HonoEnv>): Promise<Respons
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
-  const pi = c.req.param('pi');
+  const id = c.req.param('id');
 
-  // Validate PI matches the requested network
-  validatePiMatchesNetwork(pi, network);
+  // Validate ID matches the requested network
+  validatePiMatchesNetwork(id, network);
 
   // Permission check - verify user can edit this entity
   // Skip permission check for test network (ephemeral data, no access control needed)
   if (network !== 'test') {
     const userId = c.req.header('X-User-Id') || null;
-    const permCheck = await checkEditPermission(c.env, userId, pi);
+    const permCheck = await checkEditPermission(c.env, userId, id);
 
     if (!permCheck.allowed) {
       return c.json({
@@ -86,7 +86,7 @@ export async function appendVersionHandler(c: Context<HonoEnv>): Promise<Respons
   let response: Response | undefined;
   for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
     try {
-      response = await appendVersionAttempt(ipfs, tipSvc, pi, body, c.env);
+      response = await appendVersionAttempt(ipfs, tipSvc, id, body, c.env);
       break;
     } catch (error) {
       // Retry on both CASError (initial check failure) and TipWriteRaceError (atomic write race)
@@ -96,7 +96,7 @@ export async function appendVersionHandler(c: Context<HonoEnv>): Promise<Respons
         // Exponential backoff: 50ms, 100ms, 200ms
         const delay = 50 * (2 ** attempt) + Math.random() * 50;
         const errorType = error instanceof TipWriteRaceError ? 'Tip write race' : 'CAS failure';
-        console.log(`[CAS] ${errorType} detected for ${pi}, retrying in ${delay.toFixed(0)}ms (attempt ${attempt + 2}/${MAX_CAS_RETRIES})`);
+        console.log(`[CAS] ${errorType} detected for ${id}, retrying in ${delay.toFixed(0)}ms (attempt ${attempt + 2}/${MAX_CAS_RETRIES})`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
@@ -114,8 +114,8 @@ export async function appendVersionHandler(c: Context<HonoEnv>): Promise<Respons
 
   // Fire-and-forget sync to index-sync service
   c.executionCtx.waitUntil(
-    syncPI(c.env, {
-      pi,
+    syncEidos(c.env, {
+      id,
       network,
       event: 'updated',
     })
@@ -245,15 +245,15 @@ export async function listVersionsHandler(c: Context): Promise<Response> {
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
 
-  const pi = c.req.param('pi');
+  const id = c.req.param('id');
 
-  // Validate PI matches the requested network
-  validatePiMatchesNetwork(pi, network);
+  // Validate ID matches the requested network
+  validatePiMatchesNetwork(id, network);
 
   const { limit, cursor } = validatePagination(new URL(c.req.url));
 
   // Start from cursor or tip
-  let currentCid = cursor || (await tipSvc.readTip(pi));
+  let currentCid = cursor || (await tipSvc.readTip(id));
 
   const items = [];
   let nextCursor: string | null = null;
@@ -303,10 +303,10 @@ export async function getVersionHandler(c: Context): Promise<Response> {
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
 
-  const pi = c.req.param('pi');
+  const id = c.req.param('id');
 
-  // Validate PI matches the requested network
-  validatePiMatchesNetwork(pi, network);
+  // Validate ID matches the requested network
+  validatePiMatchesNetwork(id, network);
 
   const selectorParam = c.req.param('selector');
 
@@ -320,7 +320,7 @@ export async function getVersionHandler(c: Context): Promise<Response> {
   } else {
     // Walk back from tip to find version number
     const targetVer = selector.value as number;
-    let currentCid = await tipSvc.readTip(pi);
+    let currentCid = await tipSvc.readTip(id);
 
     while (true) {
       const manifest = (await ipfs.dagGet(currentCid)) as ManifestV1;
@@ -346,24 +346,35 @@ export async function getVersionHandler(c: Context): Promise<Response> {
     }
   }
 
-  // Fetch manifest
-  const manifest = (await ipfs.dagGet(manifestCid)) as ManifestV1;
+  // Fetch manifest - could be old schema (arke/manifest@v1) or new (arke/eidos@v1)
+  const manifest = (await ipfs.dagGet(manifestCid)) as any;
+
+  // Handle both old and new schema formats
+  const entityId = manifest.id || manifest.pi; // Eidos uses 'id', old schema uses 'pi'
+  const entityType = manifest.type || 'PI'; // Eidos has 'type', old schema defaults to 'PI'
 
   // Transform to response format
   const response: GetEntityResponse = {
-    pi: manifest.pi,
+    pi: entityId, // Backward compatibility
+    id: entityId,
+    type: entityType,
+    created_at: manifest.created_at || manifest.ts, // Eidos has created_at, fallback to ts for old schema
     ver: manifest.ver,
     ts: manifest.ts,
     manifest_cid: manifestCid,
     prev_cid: manifest.prev ? manifest.prev['/'] : null,
     components: Object.fromEntries(
-      Object.entries(manifest.components).map(([label, linkObj]) => [
+      Object.entries(manifest.components).map(([label, linkObj]: [string, any]) => [
         label,
         linkObj['/'],
       ])
     ),
+    ...(manifest.label && { label: manifest.label }),
+    ...(manifest.description && { description: manifest.description }),
     ...(manifest.children_pi && { children_pi: manifest.children_pi }),
     ...(manifest.parent_pi && { parent_pi: manifest.parent_pi }),
+    ...(manifest.source_pi && { source_pi: manifest.source_pi }),
+    ...(manifest.merged_entities && { merged_entities: manifest.merged_entities }),
     ...(manifest.note && { note: manifest.note }),
   };
 

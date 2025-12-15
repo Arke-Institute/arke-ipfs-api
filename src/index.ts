@@ -105,23 +105,23 @@ app.get('/entities', listEntitiesHandler);
 // POST /entities
 app.post('/entities', createEntityHandler);
 
-// GET /entities/:pi
-app.get('/entities/:pi', getEntityHandler);
+// GET /entities/:id
+app.get('/entities/:id', getEntityHandler);
 
-// POST /entities/:pi/versions
-app.post('/entities/:pi/versions', appendVersionHandler);
+// POST /entities/:id/versions
+app.post('/entities/:id/versions', appendVersionHandler);
 
-// GET /entities/:pi/versions
-app.get('/entities/:pi/versions', listVersionsHandler);
+// GET /entities/:id/versions
+app.get('/entities/:id/versions', listVersionsHandler);
 
-// GET /entities/:pi/versions/:selector
-app.get('/entities/:pi/versions/:selector', getVersionHandler);
+// GET /entities/:id/versions/:selector
+app.get('/entities/:id/versions/:selector', getVersionHandler);
 
-// POST /entities/:sourceId/merge - Merge source into target
-app.post('/entities/:sourceId/merge', mergeEntityHandler);
+// POST /entities/:id/merge - Merge source into target
+app.post('/entities/:id/merge', mergeEntityHandler);
 
-// POST /entities/:sourceId/unmerge - Unmerge (restore) source from target
-app.post('/entities/:sourceId/unmerge', unmergeEntityHandler);
+// POST /entities/:id/unmerge - Unmerge (restore) source from target
+app.post('/entities/:id/unmerge', unmergeEntityHandler);
 
 // POST /entities/:id/delete - Delete entity (creates tombstone)
 app.post('/entities/:id/delete', deleteEntityHandler);
@@ -135,14 +135,14 @@ app.post('/hierarchy', updateHierarchyHandler);
 // POST /relations - DEPRECATED: Use /hierarchy instead (kept for backward compatibility)
 app.post('/relations', updateRelationsHandler);
 
-// GET /resolve/:pi
-app.get('/resolve/:pi', resolveHandler);
+// GET /resolve/:id
+app.get('/resolve/:id', resolveHandler);
 
-// POST /migrate/batch - Migrate multiple entities (must be before /:pi route)
+// POST /migrate/batch - Migrate multiple entities (must be before /:id route)
 app.post('/migrate/batch', migrateBatchHandler);
 
-// POST /migrate/:pi - Migrate entity from old schema to arke/eidos@v1
-app.post('/migrate/:pi', migrateEntityHandler);
+// POST /migrate/:id - Migrate entity from old schema to arke/eidos@v1
+app.post('/migrate/:id', migrateEntityHandler);
 
 // POST /arke/init - Initialize Arke origin block if it doesn't exist
 // Note: Arke origin block always uses main network (ARKE_PI starts with '00', not 'II')

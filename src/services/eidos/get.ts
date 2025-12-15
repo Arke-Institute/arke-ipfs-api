@@ -90,6 +90,7 @@ export async function getEntity(
     pi: id, // DEPRECATED: backward compatibility
     id: entity.id,
     type: entity.type,
+    created_at: entity.created_at,
     label: entity.label,
     description: entity.description,
     ver: entity.ver,

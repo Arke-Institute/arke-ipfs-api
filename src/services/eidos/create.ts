@@ -229,6 +229,7 @@ export async function createEntity(
   return {
     pi: id, // DEPRECATED: for backward compatibility
     id,
+    type,
     ver: 1,
     manifest_cid: manifestCid,
     tip: manifestCid,

@@ -5,6 +5,7 @@ import { validateBody } from '../utils/validation';
 import { undeleteEntity } from '../services/eidos/undelete';
 import { UndeleteEntityRequestSchema } from '../types/eidos';
 import { Network, validatePiMatchesNetwork } from '../types/network';
+import { syncEidos } from '../services/sync';
 
 /**
  * POST /entities/:id/undelete
@@ -25,15 +26,14 @@ export async function undeleteEntityHandler(c: Context): Promise<Response> {
   // Undelete entity (restore from tombstone)
   const response = await undeleteEntity(ipfs, tipSvc, entityId, body);
 
-  // TODO: Backend sync (if needed in future)
-  // Fire-and-forget sync to index-sync service:
-  // c.executionCtx.waitUntil(
-  //   syncEntity(c.env, {
-  //     entity_id: entityId,
-  //     network,
-  //     event: 'undeleted',
-  //   })
-  // );
+  // Fire-and-forget sync to index-sync service
+  c.executionCtx.waitUntil(
+    syncEidos(c.env, {
+      id: entityId,
+      network,
+      event: 'undeleted',
+    })
+  );
 
   return c.json(response, 201);
 }

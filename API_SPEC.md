@@ -290,6 +290,7 @@ Create new entity with v1 manifest.
 **Response:** `201 Created`
 ```json
 {
+  "pi": "01J8ME3H6FZ3...",
   "id": "01J8ME3H6FZ3...",
   "type": "PI",
   "ver": 1,
@@ -371,16 +372,20 @@ Append new version to entity (CAS-protected).
 
 **Fields:**
 - `expect_tip` - Required; current tip CID (CAS guard)
+- `type` - Optional; change entity type
 - `components` - Optional; partial component updates
 - `components_remove` - Optional; component keys to remove
 - `children_pi_add` - Optional; children to add (max 100, auto-updates children)
 - `children_pi_remove` - Optional; children to remove (max 100, auto-updates children)
+- `properties` - Optional; replace entire properties object
+- `relationships` - Optional; replace entire relationships array
 - `label`, `description` - Optional; metadata updates
 - `note` - Optional; change description
 
 **Response:** `201 Created`
 ```json
 {
+  "pi": "01J8ME3H6FZ3...",
   "id": "01J8ME3H6FZ3...",
   "type": "PI",
   "ver": 4,
@@ -516,27 +521,36 @@ Update parent-child hierarchy relationships (replaces deprecated `/relations`).
 
 **Note:** For semantic relationships (e.g., "extracted_from"), use the `relationships` component instead.
 
+**Backward Compatibility:** The deprecated `POST /relations` endpoint is still available and works identically to `/hierarchy`.
+
 ---
 
 ### Merge Operations
 
 #### Merge Entities
 
-**`POST /entities/:sourceId/merge`**
+**`POST /entities/:id/merge`**
 
 Merge source entity into target entity.
 
 **Path Parameters:**
-- `sourceId` - Entity to merge (will become tombstone)
+- `id` - Entity to merge (will become tombstone)
 
 **Request:**
 ```json
 {
   "target_id": "01TARGET...",
   "expect_target_tip": "bafybeiabc789...",
-  "note": "Duplicate entry"
+  "note": "Duplicate entry",
+  "skip_sync": false
 }
 ```
+
+**Fields:**
+- `target_id` - Required; entity to merge into
+- `expect_target_tip` - Required; current target tip CID (CAS guard)
+- `note` - Optional; reason for merge
+- `skip_sync` - Optional; skip index-sync callback (internal use)
 
 **Response:** `201 Created`
 ```json
@@ -568,21 +582,28 @@ Merge source entity into target entity.
 
 #### Unmerge Entity
 
-**`POST /entities/:sourceId/unmerge`**
+**`POST /entities/:id/unmerge`**
 
 Restore a previously merged entity.
 
 **Path Parameters:**
-- `sourceId` - Entity to restore
+- `id` - Entity to restore
 
 **Request:**
 ```json
 {
   "target_id": "01TARGET...",
   "expect_target_tip": "bafybeiabc789...",
-  "note": "Restore incorrect merge"
+  "note": "Restore incorrect merge",
+  "skip_sync": false
 }
 ```
+
+**Fields:**
+- `target_id` - Required; entity it was merged into
+- `expect_target_tip` - Required; current target tip CID (CAS guard)
+- `note` - Optional; reason for unmerge
+- `skip_sync` - Optional; skip index-sync callback (internal use)
 
 **Response:** `201 Created`
 ```json
@@ -929,12 +950,25 @@ All errors return JSON:
 - `VALIDATION_ERROR` (400) - Invalid request body
 - `INVALID_PARAMS` (400) - Invalid query parameters
 - `INVALID_CURSOR` (400) - Invalid pagination cursor
+- `FORBIDDEN` (403) - Not authorized to edit entity
 - `NOT_FOUND` (404) - Entity not found
 - `CONFLICT` (409) - ID already exists
 - `CAS_FAILURE` (409) - Tip changed (includes actual/expected)
 - `BACKEND_ERROR` (503) - Backend API unavailable
 - `IPFS_ERROR` (503) - IPFS operation failed
 - `INTERNAL_ERROR` (500) - Server error
+
+---
+
+## Authorization
+
+Write operations (append version, update hierarchy) support optional authorization via the `X-User-Id` header.
+
+**Header:** `X-User-Id: <user-id>`
+
+When provided, the server checks if the user has permission to edit the entity. If not authorized, returns `403 FORBIDDEN`.
+
+**Note:** Authorization is skipped for test network (`X-Arke-Network: test`) since test data is ephemeral.
 
 ---
 
@@ -995,13 +1029,15 @@ Schema: **`arke/eidos-merged@v1`**
   "schema": "arke/eidos-merged@v1",
   "id": "01SOURCE123...",
   "type": "PI",
-  "created_at": "2025-10-08T21:00:00Z",
+  "ver": 4,
+  "ts": "2025-10-09T15:30:00Z",
   "merged_into": "01TARGET456...",
-  "merged_at": "2025-10-09T15:30:00Z",
   "prev": { "/": "bafybeilast..." },
   "note": "Merged - duplicate entry"
 }
 ```
+
+**Note:** The `ts` field indicates when the merge occurred. The `ver` continues the version chain from the original entity.
 
 ### Tip File (MFS)
 

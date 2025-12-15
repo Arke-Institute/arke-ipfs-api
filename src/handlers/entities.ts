@@ -1,7 +1,7 @@
 import { Context } from 'hono';
 import { IPFSService } from '../services/ipfs';
 import { TipService } from '../services/tip';
-import { syncPI } from '../services/sync';
+import { syncEidos } from '../services/sync';
 import { validateBody } from '../utils/validation';
 import { getBackendURL } from '../config';
 import { listEventsFromBackend } from '../clients/ipfs-server';
@@ -31,8 +31,8 @@ export async function createEntityHandler(c: Context<HonoEnv>): Promise<Response
 
   // Fire-and-forget sync to index-sync service
   c.executionCtx.waitUntil(
-    syncPI(c.env, {
-      pi: response.pi,
+    syncEidos(c.env, {
+      id: response.id,
       network,
       event: 'created',
     })
@@ -50,13 +50,13 @@ export async function getEntityHandler(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
   const network: Network = c.get('network');
-  const pi = c.req.param('pi');
+  const id = c.req.param('id');
 
-  // Validate PI matches the requested network
-  validatePiMatchesNetwork(pi, network);
+  // Validate ID matches the requested network
+  validatePiMatchesNetwork(id, network);
 
   // Call service layer
-  const response = await getEntity(ipfs, tipSvc, pi);
+  const response = await getEntity(ipfs, tipSvc, id);
 
   return c.json(response);
 }
@@ -136,6 +136,7 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
     })
     .map((event) => ({
       pi: event.pi,
+      id: event.pi,
       tip: event.tip_cid,
     }));
 
@@ -144,10 +145,11 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
   if (includeMetadata) {
     console.log(`[HANDLER] Fetching metadata for ${baseEntities.length} entities...`);
     entities = await Promise.all(
-      baseEntities.map(async ({ pi, tip }) => {
+      baseEntities.map(async ({ pi, id, tip }) => {
         const manifest = (await ipfs.dagGet(tip)) as Eidos;
         return {
           pi,
+          id,
           tip,
           type: manifest.type,
           label: manifest.label || null,
@@ -160,7 +162,7 @@ export async function listEntitiesHandler(c: Context): Promise<Response> {
       })
     );
   } else {
-    // Just return PI and tip CID
+    // Just return PI, ID and tip CID
     entities = baseEntities;
   }
 

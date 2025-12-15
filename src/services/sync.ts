@@ -10,6 +10,7 @@ import { Network } from '../types/network';
 
 type EntitySyncEvent = 'created' | 'updated' | 'merged' | 'unmerged' | 'deleted';
 type PISyncEvent = 'created' | 'updated';
+type EidosSyncEvent = 'created' | 'updated' | 'merged' | 'unmerged' | 'deleted' | 'undeleted';
 
 interface EntitySyncRequest {
   entity_id: string;
@@ -23,6 +24,13 @@ interface PISyncRequest {
   pi: string;
   network: Network;
   event: PISyncEvent;
+}
+
+interface EidosSyncRequest {
+  id: string;
+  network: Network;
+  event: EidosSyncEvent;
+  merged_into?: string;  // For 'merged' event
 }
 
 /**
@@ -68,5 +76,28 @@ export function syncPI(env: Env, event: PISyncRequest): Promise<void> {
     })
     .catch((err) => {
       console.error(`[Sync] PI sync error for ${event.pi}:`, err);
+    });
+}
+
+/**
+ * Fire-and-forget unified eidos sync to index-sync service.
+ * Returns a Promise that can be passed to ctx.waitUntil().
+ * Never throws - logs errors and continues.
+ */
+export function syncEidos(env: Env, event: EidosSyncRequest): Promise<void> {
+  return env.INDEX_SYNC.fetch('https://index-sync/sync/eidos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(event),
+  })
+    .then((res) => {
+      if (!res.ok) {
+        console.error(`[Sync] Eidos sync failed for ${event.id}: ${res.status}`);
+      } else {
+        console.log(`[Sync] Eidos sync queued: ${event.id} event=${event.event}`);
+      }
+    })
+    .catch((err) => {
+      console.error(`[Sync] Eidos sync error for ${event.id}:`, err);
     });
 }

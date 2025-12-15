@@ -93,13 +93,13 @@ function migrateEntityV1(entity: EntityV1, createdAt: string): EidosV1 {
 export async function migrateEntityHandler(c: Context): Promise<Response> {
   const ipfs: IPFSService = c.get('ipfs');
   const tipSvc: TipService = c.get('tipService');
-  const pi = c.req.param('pi');
+  const id = c.req.param('id');
 
   try {
     // Read current tip
-    const currentTipCid = await tipSvc.readTip(pi);
+    const currentTipCid = await tipSvc.readTip(id);
     if (!currentTipCid) {
-      return c.json({ error: 'NOT_FOUND', message: `Entity ${pi} not found` }, 404);
+      return c.json({ error: 'NOT_FOUND', message: `Entity ${id} not found` }, 404);
     }
 
     // Fetch manifest
@@ -109,7 +109,8 @@ export async function migrateEntityHandler(c: Context): Promise<Response> {
     if (manifest.schema === 'arke/eidos@v1') {
       return c.json({
         message: 'Entity already migrated',
-        pi,
+        pi: id,
+        id,
         schema: 'arke/eidos@v1',
         ver: manifest.ver,
       });
@@ -120,7 +121,7 @@ export async function migrateEntityHandler(c: Context): Promise<Response> {
       return c.json(
         {
           error: 'UNSUPPORTED_SCHEMA',
-          message: `Entity ${pi} has unsupported schema: ${manifest.schema}`,
+          message: `Entity ${id} has unsupported schema: ${manifest.schema}`,
         },
         400
       );
@@ -141,13 +142,14 @@ export async function migrateEntityHandler(c: Context): Promise<Response> {
     const newTipCid = await ipfs.dagPut(newManifest);
 
     // Update tip
-    await tipSvc.writeTip(pi, newTipCid);
+    await tipSvc.writeTip(id, newTipCid);
 
-    console.log(`[MIGRATE] Migrated ${pi} from ${manifest.schema} to arke/eidos@v1`);
+    console.log(`[MIGRATE] Migrated ${id} from ${manifest.schema} to arke/eidos@v1`);
 
     return c.json({
       message: 'Entity migrated successfully',
-      pi,
+      pi: id,
+      id,
       old_schema: manifest.schema,
       new_schema: 'arke/eidos@v1',
       old_tip: currentTipCid,
@@ -156,7 +158,7 @@ export async function migrateEntityHandler(c: Context): Promise<Response> {
       created_at: createdAt,
     }, 200);
   } catch (error: any) {
-    console.error(`[MIGRATE] Failed to migrate ${pi}:`, error);
+    console.error(`[MIGRATE] Failed to migrate ${id}:`, error);
     return c.json(
       {
         error: 'MIGRATION_ERROR',

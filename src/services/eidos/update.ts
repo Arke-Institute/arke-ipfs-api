@@ -161,6 +161,7 @@ export async function appendVersion(
   return {
     pi: id, // DEPRECATED: backward compatibility
     id,
+    type: newManifest.type,
     ver: newManifest.ver,
     manifest_cid: newManifestCid,
     tip: newManifestCid,
