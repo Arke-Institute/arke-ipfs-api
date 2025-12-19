@@ -126,24 +126,7 @@ export async function mergeEntities(
   console.log(`[MERGE] Created tombstone for ${sourceId} → ${req.target_id}`);
 
   // ==========================================================================
-  // STEP 5: TODO - FIRE-AND-FORGET INDEX-SYNC EVENT (Phase 3)
-  // ==========================================================================
-  // TODO: Append merge event to index-sync service
-  // try {
-  //   const eventCid = await appendEvent(backendURL, {
-  //     type: 'merge',
-  //     source_id: req.source_id,
-  //     target_id: req.target_id,
-  //     target_ver: updatedTarget.ver,
-  //     target_tip_cid: newTargetTip,
-  //   });
-  //   console.log(`[EVENT] Appended merge event: ${eventCid}`);
-  // } catch (error) {
-  //   console.error(`[EVENT] Failed to append merge event:`, error);
-  // }
-
-  // ==========================================================================
-  // STEP 6: RETURN RESPONSE
+  // STEP 5: RETURN RESPONSE
   // ==========================================================================
   return {
     source_id: sourceId,

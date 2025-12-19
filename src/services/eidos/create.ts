@@ -206,24 +206,7 @@ export async function createEntity(
   // See eidos-relationships.ts for implementation
 
   // ==========================================================================
-  // STEP 11: TODO - FIRE-AND-FORGET INDEX-SYNC EVENT (Phase 3)
-  // ==========================================================================
-  // TODO: Append create event to index-sync service
-  // try {
-  //   const eventCid = await appendEvent(backendURL, {
-  //     type: 'create',
-  //     id,
-  //     ver: 1,
-  //     tip_cid: manifestCid,
-  //     entity_type: type,
-  //   });
-  //   console.log(`[EVENT] Appended create event for entity ${id}: ${eventCid}`);
-  // } catch (error) {
-  //   console.error(`[EVENT] Failed to append create event for entity ${id}:`, error);
-  // }
-
-  // ==========================================================================
-  // STEP 12: RETURN RESPONSE
+  // STEP 11: RETURN RESPONSE
   // ==========================================================================
   return {
     id,

@@ -139,24 +139,7 @@ export async function appendVersion(
   console.log(`[EIDOS] Updated entity ${id} to v${newManifest.ver}`);
 
   // ==========================================================================
-  // STEP 8: TODO - FIRE-AND-FORGET INDEX-SYNC EVENT (Phase 3)
-  // ==========================================================================
-  // TODO: Append update event to index-sync service
-  // try {
-  //   const eventCid = await appendEvent(backendURL, {
-  //     type: 'update',
-  //     id,
-  //     ver: newManifest.ver,
-  //     tip_cid: newManifestCid,
-  //     entity_type: newManifest.type,
-  //   });
-  //   console.log(`[EVENT] Appended update event for entity ${id}: ${eventCid}`);
-  // } catch (error) {
-  //   console.error(`[EVENT] Failed to append update event for entity ${id}:`, error);
-  // }
-
-  // ==========================================================================
-  // STEP 9: RETURN RESPONSE
+  // STEP 8: RETURN RESPONSE
   // ==========================================================================
   return {
     id,

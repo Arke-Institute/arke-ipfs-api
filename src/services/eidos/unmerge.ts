@@ -143,26 +143,7 @@ export async function unmergeEntity(
   console.log(`[UNMERGE] Updated target ${req.target_id} to v${updatedTarget.ver}`);
 
   // ==========================================================================
-  // STEP 6: TODO - FIRE-AND-FORGET INDEX-SYNC EVENT (Phase 3)
-  // ==========================================================================
-  // TODO: Append unmerge event to index-sync service
-  // try {
-  //   const eventCid = await appendEvent(backendURL, {
-  //     type: 'unmerge',
-  //     source_id: req.source_id,
-  //     target_id: req.target_id,
-  //     source_ver: restoredSource.ver,
-  //     source_tip_cid: newSourceTip,
-  //     target_ver: updatedTarget.ver,
-  //     target_tip_cid: newTargetTip,
-  //   });
-  //   console.log(`[EVENT] Appended unmerge event: ${eventCid}`);
-  // } catch (error) {
-  //   console.error(`[EVENT] Failed to append unmerge event:`, error);
-  // }
-
-  // ==========================================================================
-  // STEP 7: RETURN RESPONSE
+  // STEP 6: RETURN RESPONSE
   // ==========================================================================
   return {
     source_id: sourceId,
