@@ -247,6 +247,7 @@ When an entity is merged into another, a tombstone redirect manifest is created 
   "schema": "arke/eidos-merged@v1",
   "id": "01SOURCE123...",
   "type": "PI",
+  "source_pi": "01EXTRACTEDBY...",
   "ver": 3,
   "ts": "2025-10-09T15:30:00Z",
   "prev": { "/": "bafybeilast..." },
@@ -262,6 +263,7 @@ When an entity is merged into another, a tombstone redirect manifest is created 
 | `schema` | string | ✅ | Always `"arke/eidos-merged@v1"` |
 | `id` | string | ✅ | Source entity ID (the one being merged) |
 | `type` | string | ✅ | Preserved entity type from source |
+| `source_pi` | string | ❌ | Preserved provenance - which PI extracted this entity (for lineage tracking) |
 | `ver` | number | ✅ | Version number (incremented from last active) |
 | `ts` | string | ✅ | Merge timestamp (ISO 8601) |
 | `prev` | IPLDLink | ✅ | Link to last active version (required - not nullable) |
@@ -298,6 +300,7 @@ interface EidosMerged {
   schema: 'arke/eidos-merged@v1';
   id: string;
   type: string;
+  source_pi?: string;  // Preserved for lineage tracking across collections
   ver: number;
   ts: string;
   prev: IPLDLink;

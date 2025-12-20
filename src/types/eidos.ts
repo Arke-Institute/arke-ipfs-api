@@ -90,6 +90,7 @@ export const EidosMergedSchema = z.object({
   // Identity (preserved from original)
   id: EntityIdSchema,
   type: z.string().min(1), // Preserved from original
+  source_pi: EntityIdSchema.optional(), // Preserved: which PI extracted this entity (for lineage tracking)
 
   // Version chain (continues from original - preserves history!)
   ver: z.number().int().positive(),
@@ -268,6 +269,7 @@ export interface GetEntityResponse {
 export interface GetEntityMergedResponse {
   id: string;
   type: string;
+  source_pi?: string; // Preserved for lineage tracking
   manifest_cid: string; // CID of the tombstone manifest
   merged: true;
   merged_into: string;

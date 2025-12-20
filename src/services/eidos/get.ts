@@ -48,6 +48,7 @@ export async function getEntity(
     return {
       id,
       type: merged.type,
+      source_pi: merged.source_pi, // Preserved for lineage tracking
       manifest_cid: tipCid,
       merged: true,
       merged_into: merged.merged_into,

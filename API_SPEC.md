@@ -1029,6 +1029,7 @@ Schema: **`arke/eidos-merged@v1`**
   "schema": "arke/eidos-merged@v1",
   "id": "01SOURCE123...",
   "type": "PI",
+  "source_pi": "01EXTRACTEDBY...",
   "ver": 4,
   "ts": "2025-10-09T15:30:00Z",
   "merged_into": "01TARGET456...",
@@ -1037,7 +1038,7 @@ Schema: **`arke/eidos-merged@v1`**
 }
 ```
 
-**Note:** The `ts` field indicates when the merge occurred. The `ver` continues the version chain from the original entity.
+**Note:** The `ts` field indicates when the merge occurred. The `ver` continues the version chain from the original entity. The `source_pi` is preserved from the original entity for lineage tracking across collections.
 
 ### Tip File (MFS)
 

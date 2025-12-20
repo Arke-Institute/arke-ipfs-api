@@ -113,6 +113,7 @@ export async function mergeEntities(
     schema: 'arke/eidos-merged@v1',
     id: sourceId,
     type: source.type,
+    source_pi: source.source_pi, // Preserve for lineage tracking across collections
     ver: source.ver + 1,
     ts: now,
     prev: link(sourceTip),

@@ -198,6 +198,7 @@ interface EidosMerged {
 
   id: string;                  // The entity that was merged (A)
   type: string;                // Preserved from original entity
+  source_pi?: string;          // Preserved provenance for lineage tracking across collections
 
   // =========================================================================
   // VERSION CHAIN (continues from original - preserves history!)
@@ -228,6 +229,7 @@ interface EidosMerged {
 3. **Chain resolution** - API follows redirects automatically
 4. **Unmerge possible** - Can create new version from `prev` to restore
 5. **Type preserved** - The original entity type is preserved in the tombstone
+6. **Lineage preserved** - The `source_pi` is preserved for cross-collection discovery
 
 ### Merge Tracking
 
