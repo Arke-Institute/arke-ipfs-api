@@ -62,16 +62,9 @@ export async function appendVersion(
     }
   }
 
-  // Handle properties updates (replace entire properties object)
-  if (req.properties !== undefined) {
-    if (Object.keys(req.properties).length > 0) {
-      const propsCid = await ipfs.dagPut(req.properties);
-      newComponents.properties = link(propsCid);
-    } else {
-      // Empty properties object removes the component
-      delete newComponents.properties;
-    }
-  }
+  // NOTE: Properties are now stored INLINE in the manifest (not as a component CID)
+  // This makes them directly accessible without an extra API call.
+  // See manifest construction below for where properties are handled.
 
   // Handle relationships updates (replace entire relationships array with schema wrapper)
   if (req.relationships !== undefined) {
@@ -124,6 +117,12 @@ export async function appendVersion(
     ...(newChildrenPi.length > 0 && { children_pi: newChildrenPi }),
     // Note
     ...(req.note && { note: req.note }),
+    // Inline properties - merge/replace behavior
+    // If req.properties provided: replace with new value (empty object removes)
+    // If req.properties undefined: keep existing from oldManifest
+    ...(req.properties !== undefined
+      ? (Object.keys(req.properties).length > 0 ? { properties: req.properties } : {})
+      : (oldManifest.properties ? { properties: oldManifest.properties } : {})),
   };
 
   // ==========================================================================

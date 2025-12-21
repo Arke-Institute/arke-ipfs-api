@@ -1,11 +1,13 @@
 import { z } from 'zod';
 
 /**
- * Entity ID regex that accepts both main and test networks:
+ * Entity ID regex that accepts:
  * - Main network: Standard ULID (26 chars, Crockford Base32)
  * - Test network: 'II' prefix + 24 chars
+ * - File entities: 'F' prefix + 25 chars (deterministic)
+ * - Chunk entities: 'C' prefix + 25 chars (deterministic)
  */
-const ENTITY_ID_REGEX = /^(?:II[0-9A-HJKMNP-TV-Z]{24}|[0-9A-HJKMNP-TV-Z]{26})$/;
+const ENTITY_ID_REGEX = /^(?:II[0-9A-HJKMNP-TV-Z]{24}|[FC][0-9A-HJKMNP-TV-Z]{25}|[0-9A-HJKMNP-TV-Z]{26})$/;
 
 export const EntityIdSchema = z.string().regex(ENTITY_ID_REGEX, 'Invalid entity ID');
 
@@ -66,6 +68,11 @@ export const EidosSchema = z.object({
       relationships: IPLDLinkSchema.optional(), // Semantic graph (arke/relationships@v1)
     })
     .catchall(IPLDLinkSchema), // Allow arbitrary file components
+
+  // Inline properties (type-specific metadata stored directly in manifest)
+  // Use for small, frequently-accessed data (e.g., chunk positions, filenames)
+  // For larger property sets, use components.properties (stored as separate CID)
+  properties: z.record(z.unknown()).optional(),
 
   // Hierarchical tree structure (optional, bidirectional)
   children_pi: z.array(EntityIdSchema).optional(), // Downward pointers
@@ -258,6 +265,7 @@ export interface GetEntityResponse {
     relationships?: string;
     [key: string]: string | undefined;
   };
+  properties?: Record<string, unknown>; // Inline properties for file metadata etc.
   children_pi?: string[];
   parent_pi?: string;
   source_pi?: string;

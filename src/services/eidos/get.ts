@@ -96,6 +96,7 @@ export async function getEntity(
     manifest_cid: tipCid,
     prev_cid: entity.prev ? entity.prev['/'] : null,
     components: linksToComponents(entity.components),
+    properties: entity.properties, // Inline properties for file metadata etc.
     children_pi: entity.children_pi,
     parent_pi: entity.parent_pi,
     source_pi: entity.source_pi,

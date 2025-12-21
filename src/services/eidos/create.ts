@@ -84,11 +84,9 @@ export async function createEntity(
   // ==========================================================================
   const components = componentsToLinks(req.components);
 
-  // Store properties if provided
-  if (req.properties && Object.keys(req.properties).length > 0) {
-    const propsCid = await ipfs.dagPut(req.properties);
-    components.properties = link(propsCid);
-  }
+  // NOTE: Properties are now stored INLINE in the manifest (not as a component CID)
+  // This makes them directly accessible without an extra API call.
+  // See manifest construction below for where properties are added.
 
   // Store relationships if provided (with schema wrapper)
   if (req.relationships && req.relationships.length > 0) {
@@ -118,6 +116,8 @@ export async function createEntity(
     ...(req.parent_pi && { parent_pi: req.parent_pi }),
     ...(req.source_pi && { source_pi: req.source_pi }),
     ...(req.note && { note: req.note }),
+    // Inline properties - small metadata stored directly in manifest for fast access
+    ...(req.properties && Object.keys(req.properties).length > 0 && { properties: req.properties }),
   };
 
   // ==========================================================================
